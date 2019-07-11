@@ -50,8 +50,9 @@ class _WinInt:
     bytes: int
     signed: bool
 
-    def __call__(self, value: int):
-        return BinaryObject(value.to_bytes(self.bytes, byteorder='little', signed=self.signed), alignment=self.bytes)
+    def __call__(self, value: int, align: bool = True):
+        return BinaryObject(value.to_bytes(self.bytes, byteorder='little', signed=self.signed),
+                            alignment=self.bytes if align else None)
 
 
 BYTE = _WinInt(1, signed=False)
@@ -70,6 +71,34 @@ USHORT = _WinInt(2, signed=False)
 UINT = _WinInt(4, signed=False)
 ULONG = _WinInt(4, signed=False)
 ULONGLONG = _WinInt(8, signed=False)
+
+
+@dataclass(frozen=True)
+class _WinIntPtr:
+    signed: bool
+
+    def __call__(self, architecture: Architecture):
+        return {
+            (4, False): DWORD,
+            (4, True ): LONG,
+            (8, False): QWORD,
+            (8, True ): LONGLONG
+        }[architecture.pointer, self.signed]
+
+
+DWORD_PTR = _WinIntPtr(signed=False)
+UINT_PTR = _WinIntPtr(signed=False)
+ULONG_PTR = _WinIntPtr(signed=False)
+
+INT_PTR = _WinIntPtr(signed=True)
+LONG_PTR = _WinIntPtr(signed=True)
+
+
+def MAKELONG(low: int, high: int):
+    long = BinaryObject(alignment=4)
+    long.append(WORD(low))
+    long.append(WORD(high))
+    return long
 
 
 def STR(text: str) -> BinaryObject:
@@ -92,9 +121,9 @@ class PTR(Symbol):
     architecture: Architecture
     align: bool = True
 
-    def __call__(self, offset: int):
+    def __call__(self) -> BinaryObject:
         alignment = self.architecture.pointer if self.align else None
-        data = (self.architecture.base + offset)\
+        data = (self.architecture.base + (self.target.find_placement() or (None, 0))[1]) \
             .to_bytes(self.architecture.pointer, byteorder='little', signed=False)
         return BinaryObject(data, alignment=alignment)
 
@@ -116,9 +145,9 @@ class LPTR(Symbol):
     architecture: Architecture
     align: bool = True
 
-    def __call__(self, offset: int):
+    def __call__(self) -> BinaryObject:
         alignment = self.architecture.long_pointer if self.align else None
-        data = (self.architecture.base + offset)\
+        data = (self.architecture.base + (self.target.find_placement() or (None, 0))[1]) \
             .to_bytes(self.architecture.long_pointer, byteorder='little', signed=False)
         return BinaryObject(data, alignment=alignment)
 
@@ -126,7 +155,6 @@ class LPTR(Symbol):
 @dataclass(frozen=True)
 class RVA(Symbol):
     """
-
     Windows RVA (relative virtual address) symbol
 
     Essentially a 32-bit pointer without the image base offset
@@ -134,6 +162,23 @@ class RVA(Symbol):
     target: BinaryObject
     align: bool = True
 
-    def __call__(self, offset: int):
+    def __call__(self) -> BinaryObject:
         alignment = 4 if self.align else None
+        offset = (self.target.find_placement() or (None, 0))[1]
         return BinaryObject(offset.to_bytes(4, byteorder='little', signed=False), alignment=alignment)
+
+
+@dataclass(frozen=True)
+class SIZEOF(Symbol):
+    target: BinaryObject
+    type: _WinInt
+    align: bool = True
+
+    # override order of parameters
+    def __init__(self, type: _WinInt, target: BinaryObject, align: bool = True):
+        super().__init__(target)
+        object.__setattr__(self, 'type', type)
+        object.__setattr__(self, 'align', align)
+
+    def __call__(self) -> BinaryObject:
+        return self.type(len(self.target.data), align=self.align)
