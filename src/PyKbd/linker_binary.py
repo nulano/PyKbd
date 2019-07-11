@@ -20,14 +20,14 @@ from __future__ import annotations
 from math import gcd
 from collections import deque
 from dataclasses import dataclass
-from typing import Union, Dict, Optional, Sequence, Tuple
+from typing import Optional, Union, Tuple, Iterable, Dict
 
 
 @dataclass(frozen=True)
 class Symbol:
     target: BinaryObject
 
-    def __call__(self, address: int) -> Union[bytes, BinaryObject]:
+    def __call__(self) -> BinaryObject:
         raise NotImplementedError
 
 
@@ -35,7 +35,7 @@ class BinaryObject:
     data: bytearray
     alignment: int
     symbols: Dict[int, Symbol]
-    placement: Optional[Tuple[BinaryObject, int]]
+    placement: Optional[Tuple[Optional[BinaryObject], int]]
 
     def __init__(self, data: bytes = (), alignment: Optional[int] = None):
         if alignment is None:
@@ -62,16 +62,16 @@ class BinaryObject:
             self.data.extend(value)
 
         elif isinstance(value, Symbol):
-            template = value(0)
-            if isinstance(template, BinaryObject):
-                self.append_padding(template.alignment)
-                template = template.data
+            template = value()
+            self.append_padding(template.alignment)
             self.symbols[len(self.data)] = value
-            self.data.extend(template)
+            self.data.extend(template.data)
 
         elif isinstance(value, BinaryObject):
             if value.placement is not None:
                 raise ValueError('value has been placed in another object')
+            if self == value:
+                raise ValueError('value must not be self')
 
             self.append_padding(value.alignment)
             value.placement = (self, len(self.data))
@@ -82,20 +82,24 @@ class BinaryObject:
         else:
             raise TypeError(value)
 
-    def find_placement(self) -> Optional[Tuple[BinaryObject, int]]:
+    def extend(self, values: Iterable[Union[bytes, Symbol, BinaryObject]]):
+        for value in values:
+            self.append(value)
+
+    def find_placement(self) -> Optional[Tuple[Optional[BinaryObject], int]]:
         if self.placement is None:
             return None
         target, address = self, 0
-        while target.placement is not None:
+        while target is not None and target.placement is not None:
             target, offset = target.placement
             address += offset
         return target, address
 
 
-def link(objects: Sequence[BinaryObject], base: int = 0) -> BinaryObject:
+def link(objects: Iterable[BinaryObject], base: int = 0) -> BinaryObject:
     out = BinaryObject()
 
-    seen = set()
+    seen = {out}
     queue = deque([x for x in objects if x not in seen and (seen.add(x) or True)])
 
     while len(queue) > 0:
@@ -103,12 +107,19 @@ def link(objects: Sequence[BinaryObject], base: int = 0) -> BinaryObject:
         out.alignment *= obj.alignment // gcd(out.alignment, obj.alignment)
         out.append(obj)
         for offset, symbol in obj.symbols.items():
-            if symbol.target not in seen:
-                seen.add(symbol.target)
-                queue.append(symbol.target)
+            target = symbol.target
+            if target.placement is not None:
+                target = target.find_placement()[0]
+            if target is not None and target not in seen:
+                seen.add(target)
+                queue.append(target)
+
+    out.placement = (None, base)
 
     for offset, symbol in out.symbols.items():
-        value = symbol(base + symbol.target.find_placement()[1])
+        value = symbol()
+        if isinstance(value, BinaryObject):
+            value = value.data
         out.data[offset: offset + len(value)] = value
 
     return out

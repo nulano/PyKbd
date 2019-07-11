@@ -17,7 +17,7 @@
 
 from dataclasses import dataclass
 
-from pytest import raises
+from pytest import raises, mark
 
 from PyKbd.linker_binary import BinaryObject, link, Symbol
 
@@ -27,8 +27,9 @@ class _TestSymbol(Symbol):
     target: BinaryObject
     value: int = 0
 
-    def __call__(self, address: int) -> bytes:
-        return (address ^ self.value).to_bytes(1, 'little')
+    def __call__(self) -> BinaryObject:
+        offset = (self.target.find_placement() or (None, 0))[1]
+        return BinaryObject((offset ^ self.value).to_bytes(1, 'little'))
 
 
 def test_link_single():
@@ -55,12 +56,12 @@ def test_link_two():
 def test_link_base():
     a = BinaryObject(b'\xAA')
     b = BinaryObject(b'\xBB')
-    symbol = _TestSymbol(b, 0x33)
-    a.append(symbol)
+    symb = _TestSymbol(b, 0x33)
+    a.append(symb)
     out = link([a, b], base=0xCC)
 
     assert b'\xAA\xFD\xBB' == out.data
-    assert {1: symbol} == a.symbols
+    assert {1: symb} == a.symbols
     assert (out, 2) == b.placement
 
 
@@ -82,17 +83,20 @@ def test_link_self_ref():
     assert {1: symb} == out.symbols
 
 
-def test_link_find_ref():
+@mark.parametrize("included", (False, True), ids=("separate", "included"))
+def test_link_find_ref(included):
     b = BinaryObject(b'\xCC')
     b_symbol = _TestSymbol(b, 0xAA)
     a = BinaryObject(b'\x33')
     a.append(b_symbol)
+    if included:
+        a.append(b)
     out = link([a])
 
     assert b'\x33\xA8\xCC' == out.data
     assert {1: b_symbol}
     assert (out, 0) == a.placement
-    assert (out, 2) == b.placement
+    assert 2 == b.placement[1]
 
 
 def test_append():
@@ -113,6 +117,21 @@ def test_append():
     assert {2: c} == a.symbols
 
 
+def test_extend():
+    a = BinaryObject(b'\xAA')
+    b = b'\xBB'
+    c = _TestSymbol(a, 0xCC)
+    d = BinaryObject(b'\xDD')
+
+    a.extend((b, c, d))
+
+    # symbols are undefined until linking is done
+    a.data[2] = 0xCC
+
+    assert b'\xAA\xBB\xCC\xDD' == a.data
+    assert {2: c} == a.symbols
+
+
 # noinspection PyTypeChecker
 def test_append_invalid():
     a = BinaryObject()
@@ -120,6 +139,8 @@ def test_append_invalid():
         a.append(None)
     with raises(TypeError):
         a.append([])
+    with raises(ValueError):
+        a.append(a)
 
 
 def test_append_linked():
@@ -168,12 +189,12 @@ def test_find_placement():
     assert (out, 0) == a.placement
     assert (out, 1) == b.placement
 
-    assert (out, 0) == a.find_placement()
-    assert (out, 1) == b.find_placement()
-    assert (out, 2) == c.find_placement()
-    assert (out, 3) == d.find_placement()
-    assert (out, 4) == e.find_placement()
-    assert (out, 5) == f.find_placement()
+    assert (None, 0) == a.find_placement()
+    assert (None, 1) == b.find_placement()
+    assert (None, 2) == c.find_placement()
+    assert (None, 3) == d.find_placement()
+    assert (None, 4) == e.find_placement()
+    assert (None, 5) == f.find_placement()
 
     assert b'\xAA\xBB\xCC\xDD\xEE\xFF' == out.data
 
