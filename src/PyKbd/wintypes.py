@@ -17,7 +17,11 @@
 
 from dataclasses import dataclass
 
+from . import _version
 from .linker_binary import Symbol, BinaryObject
+
+
+__version__ = _version
 
 
 @dataclass(eq=False, frozen=True)

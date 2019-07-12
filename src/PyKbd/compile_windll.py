@@ -19,9 +19,13 @@ from collections import defaultdict
 from operator import itemgetter
 from typing import Optional, Union, Tuple, Dict
 
-from PyKbd.layout import Layout
+from . import _version, _version_num
+from .layout import Layout
 from .wintypes import *
 from .linker_binary import BinaryObject, link
+
+
+__version__ = _version
 
 
 @dataclass(eq=False)
@@ -283,8 +287,8 @@ class WinDll:
         opt = BinaryObject(alignment=self.architecture.pointer)  # -- Optional Header --
         opt_magic = 0x10B if self.architecture.pointer == 4 else 0x20B
         opt.append(WORD(opt_magic))                 # Magic
-        opt.append(BYTE(1))                         # MajorLinkerVersion  # TODO
-        opt.append(BYTE(0))                         # MinorLinkerVersion  # TODO
+        opt.append(BYTE(_version_num[0]))           # MajorLinkerVersion
+        opt.append(BYTE(_version_num[1]))           # MinorLinkerVersion
         opt.append(DWORD(0))                        # SizeOfCode
         opt_size_data = sum(map(len_file, (self.sec_data, self.sec_rsrc, self.sec_reloc)))
         opt.append(DWORD(opt_size_data))            # SizeOfInitializedData
@@ -377,7 +381,11 @@ class WinDll:
         mz.append(b'\xCD\x21')              # INT 0x21
         mz.append(b'This program cannot be run in DOS mode.\n\n\r$')  # message
 
-        header.extend([mz, pe])
+        notice = BinaryObject(alignment=16)
+        notice.append(STR("Generated with PyKbd %s for %s" % (__version__, self.architecture.name)))
+
+        header.extend([mz, notice, pe])
+        header.append_padding(self.align_file)
 
         self.sec_HEADER = header
 

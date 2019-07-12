@@ -18,6 +18,11 @@
 from dataclasses import dataclass
 from typing import Tuple
 
+from . import _version
+
+
+__version__ = _version
+
 
 @dataclass
 class Layout:

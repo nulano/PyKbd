@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='PyKbd',
-    version='0.1.0',
+    version='0.1.0-dev0',
     description='a cross-platform Python library for creating and manipulating keyboard layouts',
     packages=['PyKbd'],
     package_dir={'PyKbd': 'src/PyKbd'},

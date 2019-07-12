@@ -22,6 +22,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Union, Tuple, Iterable, Dict
 
+from . import _version
+
+
+__version__ = _version
+
 
 @dataclass(frozen=True)
 class Symbol:
