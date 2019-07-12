@@ -45,7 +45,7 @@ class Architecture:
 
 
 X86 = Architecture(4, 4, 0x00005FFF0000, '32', 'Windows-x86')
-WOW64 = Architecture(4, 8, 0x00005FFE0000, 'WoW64', 'Windows-WoW64')
+WOW64 = Architecture(4, 8, 0x00005FFE0000, 'WW', 'Windows-WoW64')
 AMD64 = Architecture(8, 8, 0x001800000000, '64', 'Windows-amd64')
 
 

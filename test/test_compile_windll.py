@@ -20,12 +20,22 @@ from warnings import warn
 
 import pytest
 
+# noinspection PyProtectedMember
+from PyKbd import _version_num
 from PyKbd.layout import Layout
 from PyKbd.wintypes import *
 from PyKbd.linker_binary import BinaryObject
 from PyKbd.compile_windll import WinDll
 
 from .parse_helper import match_object
+
+
+def round_up(value, base):
+    return value + ((-value) % base)
+
+
+def len_round(base):
+    return lambda x: round_up(len(x), base)
 
 
 @pytest.fixture(scope='module')
@@ -192,15 +202,89 @@ def test_compile_header(windll: WinDll):
     assert o_msg + 0x40 == o_msg_tgt
     assert pe.placement[1] % 8 == 0
 
-    match_object((
-        b'PE\0\0', "~"  # TODO
-    ), pe)
+    if windll.architecture.pointer == 4:
+        ver_link_major, ver_link_minor, size_data, ver_major, ver_minor, size_image, size_header, checksum, \
+        size_sec_data, rva_sec_data, size_sec_rsrc, rva_sec_rsrc, size_sec_reloc, rva_sec_reloc = match_object((
+            # PE Signature, COFF header
+            b'PE\0\0\x4C\x01\x03\x00', DWORD(windll.timestamp).data, "8(0)", b'\xE0\x00\x0E\x21',
+
+            # Optional header: standard fields
+            b'\x0B\x01', "1(+)", "1(+)", "4(0)", "4(+)", "8(0)", b'\x00\x10\x00\x00' * 2,
+
+            # Optional header: Windows fields
+            {X86: b'\x00\x00\xFF\x5F', WOW64: b'\x00\x00\xFE\x5F'}[windll.architecture],  # TODO is 0x5FFE0000 always safe?
+            b'\x00\x10\x00\x00\x00\x02\x00\x00', b'\x05\x00\x01\x00', "2(+)", "2(+)", b'\x05\x00\x01\x00',
+            "4(0)", "4(+)", "4(=)", "4(=)", b'\x01\x00\x40\x05',
+            b'\x00\x00\x04\x00\x00\x10\x00\x00\x00\x00\x10\x00\x00\x10\x00\x00',
+            b'\x00\x00\x00\x00\x10\x00\x00\x00',
+
+            # Optional header: Data Directories
+            DWORD(windll.dir_export.find_placement()[1]).data, DWORD(len(windll.dir_export.data)).data, "8(0)",
+            DWORD(windll.dir_resource.find_placement()[1]).data, DWORD(len(windll.dir_resource.data)).data, "16(0)",
+            DWORD(windll.dir_reloc.find_placement()[1]).data, DWORD(len(windll.dir_reloc.data)).data, "80(0)",
+
+            # Section Table
+            b'.data\0\0\0', DWORD(len(windll.sec_data.data)).data, DWORD(windll.sec_data.placement[1]).data,
+            "4(+)", "4(&)", "12(0)", b'\x40\x00\x00\x60',
+            b'.rsrc\0\0\0', DWORD(len(windll.sec_rsrc.data)).data, DWORD(windll.sec_rsrc.placement[1]).data,
+            "4(+)", "4(&)", "12(0)", b'\x40\x00\x00\x42',
+            b'.reloc\0\0', DWORD(len(windll.sec_reloc.data)).data, DWORD(windll.sec_reloc.placement[1]).data,
+            "4(+)", "4(&)", "12(0)", b'\x40\x00\x00\x42',
+        ), pe)
+    else:
+        ver_link_major, ver_link_minor, size_data, ver_major, ver_minor, size_image, size_header, checksum, \
+        size_sec_data, rva_sec_data, size_sec_rsrc, rva_sec_rsrc, size_sec_reloc, rva_sec_reloc = match_object((
+            # PE Signature, COFF header
+            b'PE\0\0\x64\x86\x03\x00', DWORD(windll.timestamp).data, "8(0)", b'\xF0\x00\x22\x20',
+
+            # Optional header: standard fields
+            b'\x0B\x02', "1(+)", "1(+)", "4(0)", "4(+)", "8(0)", b'\x00\x10\x00\x00',
+
+            # Optional header: Windows fields
+            b'\x00\x00\x00\x00\x18\x00\x00\x00',  # TODO check
+            b'\x00\x10\x00\x00\x00\x02\x00\x00', b'\x05\x00\x01\x00', "2(+)", "2(+)", b'\x05\x00\x01\x00',
+            "4(0)", "4(+)", "4(=)", "4(=)", b'\x01\x00\x40\x05',
+            b'\x00\x00\x04\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00'
+            b'\x00\x00\x10\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00',
+            b'\x00\x00\x00\x00\x10\x00\x00\x00',
+
+            # Optional header: Data Directories
+            DWORD(windll.dir_export.find_placement()[1]).data, DWORD(len(windll.dir_export.data)).data, "8(0)",
+            DWORD(windll.dir_resource.find_placement()[1]).data, DWORD(len(windll.dir_resource.data)).data, "16(0)",
+            DWORD(windll.dir_reloc.find_placement()[1]).data, DWORD(len(windll.dir_reloc.data)).data, "80(0)",
+
+            # Section Table
+            b'.data\0\0\0', DWORD(len(windll.sec_data.data)).data, DWORD(windll.sec_data.placement[1]).data,
+            "4(+)", "4(&)", "12(0)", b'\x40\x00\x00\x60',
+            b'.rsrc\0\0\0', DWORD(len(windll.sec_rsrc.data)).data, DWORD(windll.sec_rsrc.placement[1]).data,
+            "4(+)", "4(&)", "12(0)", b'\x40\x00\x00\x42',
+            b'.reloc\0\0', DWORD(len(windll.sec_reloc.data)).data, DWORD(windll.sec_reloc.placement[1]).data,
+            "4(+)", "4(&)", "12(0)", b'\x40\x00\x00\x42',
+        ), pe)
+
+    assert (ver_link_major, ver_link_minor) == _version_num[:2]
+    assert size_data == sum(map(len_round(0x200), (windll.sec_data.data, windll.dir_resource.data,
+                                                   windll.dir_reloc.data)))
+    assert (ver_major, ver_minor) == windll.layout.version
+    assert size_image == sum(map(len_round(0x1000), (windll.sec_HEADER.data, windll.sec_data.data,
+                                                     windll.dir_resource.data, windll.dir_reloc.data)))
+    warn("size_header not implemented")  # TODO assert size_header == len_round(0x200)(windll.sec_HEADER.data)
+    warn("checksum not implemented")  # TODO checksum
+    assert size_sec_data == len_round(0x200)(windll.sec_data.data)
+    assert size_sec_rsrc == len_round(0x200)(windll.sec_rsrc.data)
+    assert size_sec_reloc == len_round(0x200)(windll.sec_reloc.data)
+    assert rva_sec_data == windll.sec_data
+    assert rva_sec_rsrc == windll.sec_rsrc
+    assert rva_sec_reloc == windll.sec_reloc
 
 
 def test_assemble(windll: WinDll):
     windll.assemble()
 
     warn('test not implemented')  # TODO
+
+    with open(windll.layout.dll_name[:-4] + windll.architecture.suffix + ".dll", "wb") as f:
+        f.write(windll.assembly.data)
 
 
 def test_compile(windll: WinDll):

@@ -101,10 +101,10 @@ def match_object(pattern: Iterable[Union[bytes, str]], object: BinaryObject):
                 raise NotImplementedError
             offset += length
         else:
-            assert offset + len(token) <= len(object.data), "token %i (%s), offset 0x%x" % (i, token, offset)
+            assert offset + len(token) <= len(object.data), "token %i (%s), offset 0x%x" % (i, token.hex(), offset)
             value = object.data[offset : offset + len(token)]
 
-            assert token == value, "token %i (%s) != offset 0x%x (%s)" % (i, token, offset, value)
+            assert token == value, "token %i (%s) != offset 0x%x (%s)" % (i, token.hex(), offset, value.hex())
             offset += len(token)
 
     assert offset == len(object.data), "unexpected extra 0x%x bytes, offset 0x%x" % (len(object.data) - offset, offset)
