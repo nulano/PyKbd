@@ -17,10 +17,12 @@
 
 from collections import defaultdict
 from operator import itemgetter
-from typing import Optional, Union, Tuple, Dict
+from time import time
+from typing import Union
+from warnings import warn
 
 from . import _version, _version_num
-from .layout import Layout
+from .layout import *
 from .wintypes import *
 from .linker_binary import BinaryObject, link
 
@@ -34,6 +36,17 @@ class WinDll:
     architecture: Architecture
 
     timestamp: int
+
+    kbd_modifiers: Optional[BinaryObject] = None
+    kbd_vk_to_wchar_table: Optional[BinaryObject] = None
+    kbd_dead_key: Optional[BinaryObject] = None
+    kbd_key_names: Optional[BinaryObject] = None
+    kbd_key_names_ext: Optional[BinaryObject] = None
+    kbd_key_names_dead: Optional[BinaryObject] = None
+    kbd_vsc_to_vk: Optional[BinaryObject] = None
+    kbd_vsc_to_vk_e0: Optional[BinaryObject] = None
+    kbd_vsc_to_vk_e1: Optional[BinaryObject] = None
+    # kbd_ligature: Optional[BinaryObject] = None
 
     kbdtables: Optional[BinaryObject] = None
 
@@ -55,9 +68,12 @@ class WinDll:
         self.layout = layout
         self.architecture = architecture
 
-        self.timestamp = 0  # TODO
+        self.timestamp = int(time())
 
     def compile(self) -> bytes:
+        self.compile_kbd_keymap()
+        self.compile_kbd_charmap()
+        # self.compile_kbd_ligature()
         self.compile_tables()
         self.compile_dir_export()
         self.compile_dir_resource()
@@ -68,11 +84,135 @@ class WinDll:
 
         return bytes(self.assembly.data)
 
-    def compile_tables(self):
-        kbdtables = BinaryObject(alignment=self.architecture.pointer)
+    def compile_kbd_keymap(self):
+        vsc_to_vk = BinaryObject(alignment=4)
+        for vsc in range(max(map(lambda k: k.code, filter(lambda k: k.prefix == 0, self.layout.keymap))) + 1):
+            key = self.layout.keymap.get(ScanCode(vsc), KeyCode("invalid", 0xFF))
+            vsc_to_vk.append(USHORT(key.win_vk))  # TODO attributes
+        self.kbd_vsc_to_vk = vsc_to_vk
 
-        # TODO
-        kbdtables.append(WSTR(self.layout.name))
+        key_names = BinaryObject(alignment=8)  # TODO non-printable only
+        key_names_ext = BinaryObject(alignment=8)  # TODO non-printable only
+        vsc_to_vk_e0 = BinaryObject(alignment=4)
+        vsc_to_vk_e1 = BinaryObject(alignment=4)
+        for scan_code, key_code in self.layout.keymap.items():
+            if scan_code.prefix == 0:
+                key_names.append(BYTE(scan_code.code))
+                key_names.append(LPTR(self.architecture, WSTR("%x" % scan_code.code)))  # TODO
+            elif scan_code.prefix == 0xE0:
+                key_names_ext.append(BYTE(scan_code.code))
+                key_names_ext.append(LPTR(self.architecture, WSTR("+%x" % scan_code.code)))  # TODO
+                vsc_to_vk_e0.append(BYTE(scan_code.code))
+                vsc_to_vk_e0.append(USHORT(key_code.win_vk))
+            elif scan_code.prefix == 0xE1:
+                vsc_to_vk_e1.append(BYTE(scan_code.code))
+                vsc_to_vk_e1.append(USHORT(key_code.win_vk))
+        key_names.append(BYTE(0))
+        key_names.append(LPTR(self.architecture, None))
+        self.kbd_key_names = key_names
+        key_names_ext.append(BYTE(0))
+        key_names_ext.append(LPTR(self.architecture, None))
+        self.kbd_key_names_ext = key_names_ext
+        vsc_to_vk_e0.append(BYTE(0))
+        vsc_to_vk_e0.append(USHORT(0))
+        self.kbd_vsc_to_vk_e0 = vsc_to_vk_e0
+        vsc_to_vk_e1.append(BYTE(0))
+        vsc_to_vk_e1.append(USHORT(0))
+        self.kbd_vsc_to_vk_e1 = vsc_to_vk_e1
+
+    def compile_kbd_charmap(self):
+        vk_to_bits = BinaryObject(alignment=4)
+        for key, shift in {0x10: 1, 0x11: 2, 0x12: 4, 0x15: 8}.items():  # TODO
+            vk_to_bits.append(BYTE(key))
+            vk_to_bits.append(BYTE(shift))
+        vk_to_bits.append(WORD(0))  # end of table
+
+        max_mask = 0
+        shift_states = []
+        shift_state_map = {}
+        for scancode, keycode in self.layout.keymap.items():
+            for shiftstate, character in self.layout.charmap.get(keycode, {}).items():
+                if not shiftstate in shift_state_map:
+                    shift_state_map[shiftstate] = len(shift_state_map)
+                    shift_states.append(shiftstate)
+                    max_mask = max(max_mask, shiftstate.to_win_mask())
+
+        if len(shift_state_map) >= 15:
+            raise RuntimeError("Too many shift states: %i >= 15" % len(shift_state_map))
+        elif len(shift_state_map) > 10:
+            warn("Too many shift states: %i > 10" % len(shift_state_map))
+
+        modifiers = BinaryObject(alignment=8)
+        modifiers.append(LPTR(self.architecture, vk_to_bits))
+        modifiers.append(WORD(max_mask))
+        for mask in range(max_mask + 1):
+            modifiers.append(BYTE(shift_state_map.get(ShiftState.from_win_mask(mask), 0xF)))
+        self.kbd_modifiers = modifiers
+
+        vk_to_wchars = BinaryObject(alignment=2)
+        for keycode, characters in self.layout.charmap.items():
+            dead = None
+            vk_to_wchars.append(BYTE(keycode.win_vk))
+            vk_to_wchars.append(BYTE(0))  # Attributes  # TODO
+            for shiftstate in range(len(shift_states)):
+                character = characters.get(shift_states[shiftstate], Character("\uF000"))  # WCH_NONE
+                if character.dead:
+                    # TODO check entry exists?
+                    if dead is None:
+                        dead = {}
+                    dead[shiftstate] = character.char
+                    character = Character("\uF001")  # WCH_DEAD
+                vk_to_wchars.append(WCHAR(character.char))
+            if dead is not None:
+                vk_to_wchars.append(BYTE(0xFF))
+                vk_to_wchars.append(BYTE(0))
+                for shiftstate in range(len(shift_states)):
+                    vk_to_wchars.append(WCHAR(dead.get(shiftstate, "\uF000")))
+        vk_to_wchars.append(BYTE(0))  # end of table
+        vk_to_wchars.append(BYTE(0))
+        for shiftstate in range(len(shift_states)):
+            vk_to_wchars.append(WCHAR('\0'))
+
+        vk_to_wchar_table = BinaryObject(alignment=8)
+        vk_to_wchar_table.append(LPTR(self.architecture, vk_to_wchars))
+        vk_to_wchar_table.append(BYTE(len(shift_states)))
+        vk_to_wchar_table.append(BYTE(len(shift_states) * 2 + 2))
+        self.kbd_vk_to_wchar_table = vk_to_wchar_table
+
+        dead_key = BinaryObject(alignment=4)
+        for accent, key in self.layout.deadkeys.items():
+            for character, composed in key.charmap.items():
+                dead_key.append(MAKELONG(ord(character), ord(accent)))
+                dead_key.append(WCHAR(composed.char))
+                dead_key.append(USHORT(1 if composed.dead else 0))
+        dead_key.append(DWORD(0))  # end of table
+        dead_key.append(WORD(0))  # WCHAR
+        dead_key.append(USHORT(0))
+        self.kbd_dead_key = dead_key
+
+        key_names_dead = BinaryObject(alignment=8)
+        for accent, key in self.layout.deadkeys.items():
+            key_names_dead.append(LPTR(self.architecture, WSTR(accent + key.name)))
+        self.kbd_key_names_dead = key_names_dead
+
+    def compile_tables(self):
+        kbdtables = BinaryObject(alignment=self.architecture.long_pointer)
+        kbdtables.append(LPTR(self.architecture, self.kbd_modifiers))
+        kbdtables.append(LPTR(self.architecture, self.kbd_vk_to_wchar_table))
+        kbdtables.append(LPTR(self.architecture, self.kbd_dead_key))
+        kbdtables.append(LPTR(self.architecture, self.kbd_key_names))
+        kbdtables.append(LPTR(self.architecture, self.kbd_key_names_ext))
+        kbdtables.append(LPTR(self.architecture, self.kbd_key_names_dead))
+        kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk))
+        kbdtables.append(BYTE(len(self.kbd_vsc_to_vk.data) // 2))
+        kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk_e0))
+        kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk_e1))
+        kbdtables.append(MAKELONG(1, 1))  # TODO KLLF_ALTGR, KLLF_SHIFTLOCK, KLLF_LRM_RLM
+        kbdtables.append(BYTE(0))
+        kbdtables.append(BYTE(0))
+        kbdtables.append(LPTR(self.architecture, None))  # ligature  # TODO ?
+        kbdtables.append(DWORD(0))  # dwType, optional  # TODO ???
+        kbdtables.append(DWORD(0))  # dwSubType, optional  # TODO ???
 
         self.kbdtables = kbdtables
 
@@ -81,7 +221,7 @@ class WinDll:
         if self.architecture.pointer == 8:                          #
             func.append(BYTE(0x48))                                 # (if AMD64) REX ...
         func.append(BYTE(0xB8))                                     # MOV EAX, ...
-        func.append(PTR(self.kbdtables, self.architecture, False))  # ... offset KbdLayerDescriptorTable
+        func.append(PTR(self.architecture, self.kbdtables, False))  # ... offset KbdLayerDescriptorTable
         if self.architecture == WOW64:                              #
             func.append(BYTE(0x99))                                 # (if WOW64) CDQ
         func.append(BYTE(0xC3))                                     # RET
@@ -237,8 +377,9 @@ class WinDll:
 
         blocks = defaultdict(set)
         for offset, symbol in self.sec_data.symbols.items():
-            offset += self.sec_data.placement[1]
-            blocks[offset // 0x1000].add((offset % 0x1000, symbol))
+            if (isinstance(symbol, PTR) or isinstance(symbol, LPTR)) and symbol.target is not None:
+                offset += self.sec_data.placement[1]
+                blocks[offset // 0x1000].add((offset % 0x1000, symbol))
 
         for base, symbols in sorted(blocks.items(), key=itemgetter(0)):
             reloc.append(DWORD(base * 0x1000))
@@ -297,7 +438,7 @@ class WinDll:
         opt.append(RVA(self.sec_data)())            # BaseOfCode
         if self.architecture.pointer == 4:
             opt.append(RVA(self.sec_data)())        # BaseOfData (PE32 only)
-        opt.append(PTR(header, self.architecture))  # ImageBase
+        opt.append(PTR(self.architecture, header))  # ImageBase
         opt.append(DWORD(self.align_section))       # SectionAlignment
         opt.append(DWORD(self.align_file))          # FileAlignment
         opt.append(WORD(5))                         # MajorOSVersion  # TODO is XP ok?

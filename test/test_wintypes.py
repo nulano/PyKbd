@@ -144,6 +144,7 @@ def test_str():
     assert b"Hello World!\0" == STR("Hello World!").data
     with raises(ValueError):
         STR("\xAA")
+    assert 1 == STR("Test").alignment
 
 
 def test_wstr():
@@ -151,6 +152,8 @@ def test_wstr():
     assert b"\x61\x01\x70\x00\x65\x00\x09\x01\x69\x00\xe4\x00\x6c\x00\x20\x00" \
            b"\x63\x00\x68\x00\xe2\x00\x72\x00\xe3\x00\xe7\x00\x74\x00\xe9\x00\x72\x00\x73\x00\x00\x00" \
            == WSTR("špeĉiäl chârãçtérs").data
+    assert 2 == WSTR("Test").alignment
+    assert 1 == WSTR("Test", False).alignment
 
 
 # next check symbols

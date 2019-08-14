@@ -22,7 +22,7 @@ import pytest
 
 # noinspection PyProtectedMember
 from PyKbd import _version_num
-from PyKbd.layout import Layout
+from PyKbd.layout import *
 from PyKbd.wintypes import *
 from PyKbd.linker_binary import BinaryObject
 from PyKbd.compile_windll import WinDll
@@ -40,12 +40,44 @@ def len_round(base):
 
 @pytest.fixture(scope='module')
 def layout():
-    return Layout("Dummy Test Layout", "PyKbd", "Public Domain", (1, 0), "kbdtst.dll")
+    return Layout("Dummy Test Layout", "PyKbd Test Layout", "PyKbd Test File", (1, 0), "kbdtst.dll",
+                  {
+                      ScanCode(0x10): KeyCode('Q', ord('Q')),
+                      ScanCode(0x11): KeyCode('W', ord('W')),
+                      ScanCode(0x47, 0xE0): KeyCode('Home', 0x24),
+                      ScanCode(0x1D, 0xE1): KeyCode('Pause', 0x13),
+                  }, {
+                      KeyCode('Q', ord('Q')): {ShiftState(): Character('q'), ShiftState(shift=True): Character('Q')},
+                      KeyCode('W', ord('W')): {ShiftState(): Character('w', dead=True)},
+                  }, {
+                      'w': DeadKey("Test W", {'w': Character('w', dead=True), 'q': Character('q')}),
+                  })
 
 
 @pytest.fixture(scope='module', params=[X86, WOW64, AMD64], ids=["x86", "WoW64", "amd64"])
 def windll(request, layout: Layout):
     return WinDll(layout, request.param)
+
+
+def test_compile_kbd_keymap(windll: WinDll):
+    windll.compile_kbd_keymap()
+
+    warn('test not implemented')  # TODO
+
+    assert isinstance(windll.kbd_vsc_to_vk, BinaryObject)
+    assert isinstance(windll.kbd_vsc_to_vk_e0, BinaryObject)
+    assert isinstance(windll.kbd_vsc_to_vk_e1, BinaryObject)
+
+
+def test_compile_kbd_charmap(windll: WinDll):
+    windll.compile_kbd_charmap()
+
+    warn('test not implemented')  # TODO
+
+    assert isinstance(windll.kbd_modifiers, BinaryObject)
+    assert isinstance(windll.kbd_vk_to_wchar_table, BinaryObject)
+    assert isinstance(windll.kbd_dead_key, BinaryObject)
+    assert isinstance(windll.kbd_key_names_dead, BinaryObject)
 
 
 def test_compile_tables(windll: WinDll):
@@ -183,7 +215,10 @@ def test_compile_dir_reloc(windll: WinDll):
         assert offset % 4 == 0
     assert offset == len(windll.dir_reloc.data)
 
-    assert list(sorted(windll.sec_data.symbols.keys())) == symbols
+    # do not include RVA
+    # TODO do not include SIZEOF
+    assert list(sorted(map(itemgetter(0), filter(lambda x: not isinstance(x[1], RVA) and x[1].target is not None,
+                                                 windll.sec_data.symbols.items())))) == symbols
 
     assert windll.sec_reloc.data == windll.dir_reloc.data
 

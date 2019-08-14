@@ -30,7 +30,7 @@ __version__ = _version
 
 @dataclass(frozen=True)
 class Symbol:
-    target: BinaryObject
+    target: Optional[BinaryObject]
 
     def __call__(self) -> BinaryObject:
         raise NotImplementedError
@@ -113,7 +113,7 @@ def link(objects: Iterable[BinaryObject], base: int = 0) -> BinaryObject:
         out.append(obj)
         for offset, symbol in obj.symbols.items():
             target = symbol.target
-            if target.placement is not None:
+            if target is not None and target.placement is not None:
                 target = target.find_placement()[0]
             if target is not None and target not in seen:
                 seen.add(target)

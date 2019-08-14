@@ -16,6 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass
+from typing import Optional
 
 from pytest import raises, mark
 
@@ -24,11 +25,11 @@ from PyKbd.linker_binary import BinaryObject, link, Symbol
 
 @dataclass(frozen=True)
 class _TestSymbol(Symbol):
-    target: BinaryObject
+    target: Optional[BinaryObject]
     value: int = 0
 
     def __call__(self) -> BinaryObject:
-        offset = (self.target.find_placement() or (None, 0))[1]
+        offset = (self.target is not None and self.target.find_placement() or (None, 0))[1]
         return BinaryObject((offset ^ self.value).to_bytes(1, 'little'))
 
 
@@ -97,6 +98,15 @@ def test_link_find_ref(included):
     assert {1: b_symbol}
     assert (out, 0) == a.placement
     assert 2 == b.placement[1]
+
+
+def test_link_null_ref():
+    a = BinaryObject(b'\xAA')
+    b = _TestSymbol(None, 0xBB)
+    a.append(b)
+    out = link([a])
+
+    assert b'\xAA\xBB' == out.data
 
 
 def test_append():

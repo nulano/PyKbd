@@ -16,6 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass
+from typing import Optional
 
 from . import _version
 from .linker_binary import Symbol, BinaryObject
@@ -106,11 +107,24 @@ def MAKELONG(low: int, high: int):
 
 
 def STR(text: str) -> BinaryObject:
-    return BinaryObject((text + '\0').encode('ascii'))
+    return BinaryObject((text + '\0').encode('ascii'), alignment=1)
 
 
-def WSTR(text: str) -> BinaryObject:
-    return BinaryObject((text + '\0').encode('utf-16le'))
+def WSTR(text: str, align: bool = True) -> BinaryObject:
+    return BinaryObject((text + '\0').encode('utf-16le'), alignment=2 if align else None)
+
+
+# def CHAR(char: str) -> BinaryObject:
+#     if len(char) != 1:
+#         raise ValueError("char must have length 1")
+#     return BinaryObject(char.encode('ascii'))
+
+
+def WCHAR(char: str) -> BinaryObject:
+    # TODO check for UCS-2 range
+    if len(char) != 1:
+        raise ValueError("char must have length 1")
+    return BinaryObject(char.encode('utf-16le'))
 
 
 @dataclass(frozen=True)
@@ -121,14 +135,21 @@ class PTR(Symbol):
 
         typedef void *equivalent_type;
     """
-    target: BinaryObject
+    target: Optional[BinaryObject]
     architecture: Architecture
     align: bool = True
 
+    # override order of parameters
+    def __init__(self, architecture: Architecture, target: Optional[BinaryObject], align: bool = True):
+        super().__init__(target)
+        object.__setattr__(self, 'architecture', architecture)
+        object.__setattr__(self, 'align', align)
+
     def __call__(self) -> BinaryObject:
         alignment = self.architecture.pointer if self.align else None
-        data = (self.architecture.base + (self.target.find_placement() or (None, 0))[1]) \
-            .to_bytes(self.architecture.pointer, byteorder='little', signed=False)
+        offset = (self.architecture.base + (self.target.find_placement() or (None, 0))[1]) \
+            if self.target is not None else 0
+        data = offset.to_bytes(self.architecture.pointer, byteorder='little', signed=False)
         return BinaryObject(data, alignment=alignment)
 
 
@@ -145,14 +166,21 @@ class LPTR(Symbol):
         #endif
         typedef void *KBD_LONG_POINTER equivalent_type;
     """
-    target: BinaryObject
+    target: Optional[BinaryObject]
     architecture: Architecture
     align: bool = True
 
+    # override order of parameters
+    def __init__(self, architecture: Architecture, target: Optional[BinaryObject], align: bool = True):
+        super().__init__(target)
+        object.__setattr__(self, 'architecture', architecture)
+        object.__setattr__(self, 'align', align)
+
     def __call__(self) -> BinaryObject:
         alignment = self.architecture.long_pointer if self.align else None
-        data = (self.architecture.base + (self.target.find_placement() or (None, 0))[1]) \
-            .to_bytes(self.architecture.long_pointer, byteorder='little', signed=False)
+        offset = (self.architecture.base + (self.target.find_placement() or (None, 0))[1]) \
+            if self.target is not None else 0
+        data = offset.to_bytes(self.architecture.long_pointer, byteorder='little', signed=False)
         return BinaryObject(data, alignment=alignment)
 
 
@@ -163,12 +191,12 @@ class RVA(Symbol):
 
     Essentially a 32-bit pointer without the image base offset
     """
-    target: BinaryObject
+    target: Optional[BinaryObject]
     align: bool = True
 
     def __call__(self) -> BinaryObject:
         alignment = 4 if self.align else None
-        offset = (self.target.find_placement() or (None, 0))[1]
+        offset = (self.target.find_placement() or (None, 0))[1] if self.target is not None else 0
         return BinaryObject(offset.to_bytes(4, byteorder='little', signed=False), alignment=alignment)
 
 
