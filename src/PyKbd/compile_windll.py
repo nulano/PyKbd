@@ -14,17 +14,17 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+from bisect import bisect_left
 from collections import defaultdict
 from operator import itemgetter
 from time import time
-from typing import Union
+from typing import Union, List
 from warnings import warn
 
 from . import _version, _version_num
 from .layout import *
 from .wintypes import *
-from .linker_binary import BinaryObject, link
+from .linker_binary import BinaryObject, BinaryObjectReader, link
 
 
 __version__ = _version
@@ -54,10 +54,16 @@ class WinDll:
     dir_resource: Optional[BinaryObject] = None
     dir_reloc: Optional[BinaryObject] = None
 
+    # compile-only
     sec_HEADER: Optional[BinaryObject] = None
     sec_data: Optional[BinaryObject] = None
     sec_rsrc: Optional[BinaryObject] = None
     sec_reloc: Optional[BinaryObject] = None
+
+    # decompile-only
+    base: Optional[int] = None
+    sections: Optional[List[Tuple[int, int]]] = None
+    vk_names: Optional[Dict[int, str]] = None
 
     assembly: Optional[BinaryObject] = None
 
@@ -83,6 +89,32 @@ class WinDll:
         self.assemble()
 
         return bytes(self.assembly.data)
+
+    def decompile(self, data: bytes):
+        self.assembly = BinaryObject(data, alignment=self.align_file)
+
+        self.decompile_header()
+        # skipping .reloc
+        self.decompile_dir_export()
+        self.decompile_tables()
+        self.decompile_kbd_keymap()
+        self.decompile_kbd_charmap()
+        self.decompile_dir_resource()
+
+    def _extract_fixed(self, rva: int, size: int):
+        section_rva, section_offset = self.sections[bisect_left(self.sections, (rva + 1, 0)) - 1]
+        offset = section_offset + (rva - section_rva)
+        return bytes(self.assembly.data[offset : offset + size])
+
+    def _extract_array(self, rva: int, entry_size: int):
+        data = bytearray()
+        while True:
+            entry = self._extract_fixed(rva, entry_size)
+            rva += entry_size
+            data.extend(entry)
+            if entry.strip(b"\0") == b"":
+                break
+        return bytes(data), len(data) // entry_size - 1
 
     def compile_kbd_keymap(self):
         vsc_to_vk = BinaryObject(alignment=4)
@@ -120,6 +152,74 @@ class WinDll:
         vsc_to_vk_e1.append(USHORT(0))
         self.kbd_vsc_to_vk_e1 = vsc_to_vk_e1
 
+    def decompile_kbd_keymap(self):
+        names = {}
+        self.vk_names = {}
+        if self.kbd_key_names is not None:
+            key_names = BinaryObjectReader(self.kbd_key_names)
+            while True:
+                vsc = BYTE.read(key_names)
+                if vsc == 0:
+                    break
+                name_rva = LPTR.read(key_names, self.architecture) - self.base
+                name = self._extract_array(name_rva, 2)[0][:-2].decode('utf-16le')
+                names[ScanCode(vsc)] = name
+
+        if self.kbd_key_names_ext is not None:
+            key_names_ext = BinaryObjectReader(self.kbd_key_names_ext)
+            while True:
+                vsc = BYTE.read(key_names_ext)
+                if vsc == 0:
+                    break
+                name_rva = LPTR.read(key_names_ext, self.architecture) - self.base
+                name = self._extract_array(name_rva, 2)[0][:-2].decode('utf-16le')
+                names[ScanCode(vsc, 0xE0)] = name
+
+        vsc_to_vk = BinaryObjectReader(self.kbd_vsc_to_vk)
+        vsc_to_vk_len = len(self.kbd_vsc_to_vk.data) // 2
+        for vsc in range(vsc_to_vk_len):
+            vk = USHORT.read(vsc_to_vk)  # TODO attributes
+            if vk == 0xFF:
+                continue
+            scancode = ScanCode(vsc)
+            name = names.get(scancode, chr(vk))
+            if scancode in self.layout.keymap:
+                warn("replacing duplicate scancode: 0x%x" % vsc)
+            if vk in self.vk_names:
+                warn("replacing duplicate vk name: 0x%x" % vk)
+            self.vk_names[vk] = name
+            self.layout.keymap[scancode] = KeyCode(name, vk)
+
+        vsc_to_vk_e0 = BinaryObjectReader(self.kbd_vsc_to_vk_e0)
+        while True:
+            vsc = BYTE.read(vsc_to_vk_e0)
+            if vsc == 0:
+                break
+            vk = USHORT.read(vsc_to_vk_e0)  # TODO attributes
+            scancode = ScanCode(vsc, 0xE0)
+            name = names.get(scancode, chr(vk))
+            if scancode in self.layout.keymap:
+                warn("replacing duplicate scancode: 0xE0 0x%x" % vsc)
+            if vk in self.vk_names:
+                warn("replacing duplicate vk name: 0x%x" % vk)
+            self.vk_names[vk] = name
+            self.layout.keymap[scancode] = KeyCode(name, vk)
+
+        vsc_to_vk_e1 = BinaryObjectReader(self.kbd_vsc_to_vk_e1)
+        while True:
+            vsc = BYTE.read(vsc_to_vk_e1)
+            if vsc == 0:
+                break
+            vk = USHORT.read(vsc_to_vk_e1)  # TODO attributes
+            scancode = ScanCode(vsc, 0xE1)
+            name = names.get(scancode, chr(vk))
+            if scancode in self.layout.keymap:
+                warn("replacing duplicate scancode: 0xE1 0x%x" % vsc)
+            if vk in self.vk_names:
+                warn("replacing duplicate vk name: 0x%x" % vk)
+            self.vk_names[vk] = name
+            self.layout.keymap[scancode] = KeyCode(name, vk)
+        
     def compile_kbd_charmap(self):
         vk_to_bits = BinaryObject(alignment=4)
         for key, shift in {0x10: 1, 0x11: 2, 0x12: 4, 0x15: 8}.items():  # TODO
@@ -177,6 +277,10 @@ class WinDll:
         vk_to_wchar_table.append(LPTR(self.architecture, vk_to_wchars))
         vk_to_wchar_table.append(BYTE(len(shift_states)))
         vk_to_wchar_table.append(BYTE(len(shift_states) * 2 + 2))
+        vk_to_wchar_table.append(LPTR(self.architecture, None))  # end of table
+        vk_to_wchar_table.append(BYTE(0))
+        vk_to_wchar_table.append(BYTE(0))
+        vk_to_wchar_table.append_padding(self.architecture.long_pointer)
         self.kbd_vk_to_wchar_table = vk_to_wchar_table
 
         dead_key = BinaryObject(alignment=4)
@@ -193,7 +297,105 @@ class WinDll:
         key_names_dead = BinaryObject(alignment=8)
         for accent, key in self.layout.deadkeys.items():
             key_names_dead.append(LPTR(self.architecture, WSTR(accent + key.name)))
+        key_names_dead.append(LPTR(self.architecture, None))  # end of table
         self.kbd_key_names_dead = key_names_dead
+
+    def decompile_kbd_charmap(self):
+        modifiers = BinaryObjectReader(self.kbd_modifiers)
+
+        vk_to_bits_rva = LPTR.read(modifiers, self.architecture) - self.base
+        vk_to_bits_data, vk_to_bits_len = self._extract_array(vk_to_bits_rva, 2)
+        vk_to_bits = BinaryObjectReader(BinaryObject(vk_to_bits_data, alignment=4))
+        bit_to_vk = {}
+        for _ in range(vk_to_bits_len):
+            key = BYTE.read(vk_to_bits)
+            shift = BYTE.read(vk_to_bits)
+            bit_to_vk[shift] = key
+
+        max_mask = WORD.read(modifiers)
+        shift_state_map = {}
+        for mask in range(max_mask + 1):
+            column = BYTE.read(modifiers)
+            if column != 0xF:
+                shift_state_map[column] = ShiftState.from_win_mask(mask)  # TODO use bit_to_vk
+
+        vk_to_wchar_table = BinaryObjectReader(self.kbd_vk_to_wchar_table)
+        while True:
+            vk_to_wchar_ptr = LPTR.read(vk_to_wchar_table, self.architecture)
+            if vk_to_wchar_ptr == 0:
+                break
+            vk_to_wchar_rva = vk_to_wchar_ptr - self.base
+            vk_to_wchar_cols = BYTE.read(vk_to_wchar_table)
+            vk_to_wchar_width = BYTE.read(vk_to_wchar_table)
+
+            vk_to_wchar_data, vk_to_wchar_rows = self._extract_array(vk_to_wchar_rva, vk_to_wchar_width)
+            vk_to_wchar = BinaryObjectReader(BinaryObject(vk_to_wchar_data, alignment=2))
+            row = 0
+            while row < vk_to_wchar_rows:
+                vk = BYTE.read(vk_to_wchar)
+                attributes = BYTE.read(vk_to_wchar)  # TODO
+                keycode = KeyCode(self.vk_names.get(vk, chr(vk)), vk)
+                dead = None
+                characters = {}
+                for col in range(vk_to_wchar_cols):
+                    shiftstate = shift_state_map[col]
+                    character = Character(WCHAR.read(vk_to_wchar))
+                    if character.char == "\uF000":  # Null
+                        pass
+                    elif character.char == "\uF001":  # Dead
+                        if dead is None:
+                            dead = {}
+                        dead[col] = True
+                    elif character.char == "\uF002":  # Ligature
+                        warn("ligature detected, skipping")
+                    else:
+                        characters[shiftstate] = character
+                row += 1
+                if dead is not None:
+                    vk_to_wchar.read_or_warn(BYTE(0xFF))
+                    vk_to_wchar.read_or_warn(BYTE(0x00))
+                    for col in range(vk_to_wchar_cols):
+                        if not dead.get(col, False):
+                            vk_to_wchar.read_or_warn(WCHAR("\uF000"))
+                        else:
+                            shiftstate = shift_state_map[col]
+                            character = Character(WCHAR.read(vk_to_wchar), True)
+                            if character.char in "\uF000\uF001\uF002":
+                                warn("dead key maps to invalid character")
+                            else:
+                                characters[shiftstate] = character
+                    row += 1
+                if keycode in self.layout.charmap:
+                    warn("replacing duplicate keycode: " + str(keycode))
+                self.layout.charmap[keycode] = characters
+
+        dead_key_names = {}
+        if self.kbd_key_names_dead is not None:
+            key_names_dead = BinaryObjectReader(self.kbd_key_names_dead)
+            while True:
+                name_ptr = LPTR.read(key_names_dead, self.architecture)
+                if name_ptr == 0:
+                    break
+                name = self._extract_array(name_ptr - self.base, 2)[0][:-2].decode('utf-16le')  # TODO use WSTR
+                dead_key_names[name[0]] = name[1:]
+
+        if self.kbd_dead_key is not None:
+            dead_key = BinaryObjectReader(self.kbd_dead_key)
+            while True:
+                character = WCHAR.read(dead_key)
+                accent = WCHAR.read(dead_key)
+                if character == '\0' and accent == '\0':
+                    break
+                composed_char = WCHAR.read(dead_key)
+                composed_attr = USHORT.read(dead_key)
+                if composed_attr > 1:
+                    warn("unknown dead key attributes: 0x%x" % composed_attr)
+                composed = Character(composed_char, composed_attr == 1)
+                if accent not in self.layout.deadkeys:
+                    self.layout.deadkeys[accent] = DeadKey(dead_key_names.get(accent, accent), {})
+                if character in self.layout.deadkeys[accent].charmap:
+                    warn("replacing duplicate dead key")
+                self.layout.deadkeys[accent].charmap[character] = composed
 
     def compile_tables(self):
         kbdtables = BinaryObject(alignment=self.architecture.long_pointer)
@@ -215,6 +417,48 @@ class WinDll:
         kbdtables.append(DWORD(0))  # dwSubType, optional  # TODO ???
 
         self.kbdtables = kbdtables
+
+    def decompile_tables(self):
+        kbdtables = BinaryObjectReader(self.kbdtables)
+
+        modifiers_rva = LPTR.read(kbdtables, self.architecture) - self.base
+        modifiers_len = BinaryObject(self._extract_fixed(modifiers_rva + self.architecture.long_pointer, 2), alignment=2)
+        modifiers_len = self.architecture.long_pointer + 2 * (WORD.read(BinaryObjectReader(modifiers_len)) + 2)
+        self.kbd_modifiers = BinaryObject(self._extract_fixed(modifiers_rva, modifiers_len), alignment=8)
+
+        vk_to_wchar_table_rva = LPTR.read(kbdtables, self.architecture) - self.base
+        self.kbd_vk_to_wchar_table = BinaryObject(self._extract_array(vk_to_wchar_table_rva, 2 * self.architecture.long_pointer)[0], alignment=8)
+
+        dead_key_ptr = LPTR.read(kbdtables, self.architecture)
+        if dead_key_ptr != 0:
+            dead_key_rva = dead_key_ptr - self.base
+            self.kbd_dead_key = BinaryObject(self._extract_array(dead_key_rva, 8)[0], alignment=8)
+
+        key_names_ptr = LPTR.read(kbdtables, self.architecture)
+        if key_names_ptr != 0:
+            key_names_rva = key_names_ptr - self.base
+            self.kbd_key_names = BinaryObject(self._extract_array(key_names_rva, 2 * self.architecture.long_pointer)[0], alignment=8)
+
+        key_names_ext_ptr = LPTR.read(kbdtables, self.architecture)
+        if key_names_ext_ptr != 0:
+            key_names_ext_rva = key_names_ext_ptr - self.base
+            self.kbd_key_names_ext = BinaryObject(self._extract_array(key_names_ext_rva, 2 * self.architecture.long_pointer)[0], alignment=8)
+
+        key_names_dead_ptr = LPTR.read(kbdtables, self.architecture)
+        if key_names_dead_ptr != 0:
+            key_names_dead_rva = key_names_dead_ptr - self.base
+            self.kbd_key_names_dead = BinaryObject(self._extract_array(key_names_dead_rva, self.architecture.long_pointer)[0], alignment=8)
+
+        vsc_to_vk_rva = LPTR.read(kbdtables, self.architecture) - self.base
+        vsc_to_vk_len = BYTE.read(kbdtables) + 1
+        self.kbd_vsc_to_vk = BinaryObject(self._extract_fixed(vsc_to_vk_rva, 2 * vsc_to_vk_len), alignment=8)
+
+        vsc_to_vk_e0_rva = LPTR.read(kbdtables, self.architecture) - self.base
+        self.kbd_vsc_to_vk_e0 = BinaryObject(self._extract_array(vsc_to_vk_e0_rva, 4)[0], alignment=8)
+        vsc_to_vk_e1_rva = LPTR.read(kbdtables, self.architecture) - self.base
+        self.kbd_vsc_to_vk_e1 = BinaryObject(self._extract_array(vsc_to_vk_e1_rva, 4)[0], alignment=8)
+
+        # TODO characteristics, types, ligatures, ...
 
     def compile_dir_export(self):
         func = BinaryObject(alignment=16)                           # -- PKBDTABLES KbdLayerDescriptor() --
@@ -256,6 +500,48 @@ class WinDll:
         export.extend((addresses, names, ordinals, dll_name, func_name))
 
         self.dir_export = export
+
+    def decompile_dir_export(self):
+        reader = BinaryObjectReader(self.dir_export)
+
+        # we assume the dll has only one function: KbdLayerDescriptor (warn and guess otherwise)
+
+        reader.offset = 12                  # -- Export Directory --
+        dll_name_rva = DWORD.read(reader)   # Name RVA
+        reader.read_or_warn(DWORD(1))       # Ordinal Base
+        reader.read_or_warn(DWORD(1))       # Address Table Entries
+        reader.read_or_warn(DWORD(1))       # Number of Name Pointers
+        addresses = DWORD.read(reader)      # Export Address Table RVA
+
+        func_rva = DWORD.read(BinaryObjectReader(BinaryObject(self._extract_fixed(addresses, 4), alignment=4)))
+        # function is typically shorter than 16 bytes
+        func = BinaryObject(self._extract_fixed(func_rva, 16), alignment=4)
+
+        reader = BinaryObjectReader(func)
+        if self.architecture == AMD64:
+            reader.read_or_fail(BYTE(0x48))
+        ins = BYTE.read(reader)
+        if ins == 0xB8:  # MOV EAX, ...
+            table_rva = DWORD_PTR(self.architecture).read(reader, align=False) - self.base
+            ins = BYTE.read(reader)
+            if ins == 0x99:
+                if self.architecture == X86:
+                    self.architecture = WOW64
+                elif self.architecture != WOW64:
+                    raise IOError("unexpected instruction: 0x%X" % ins)
+                ins = BYTE.read(reader)
+        elif ins == 0x8D:  # LEA ...
+            reader.read_or_fail(BYTE(0x05))  # (ModRM) ... [EAX] + disp32
+            table_rva = DWORD.read(reader, align=False)
+            table_rva += func_rva + reader.offset
+            ins = BYTE.read(reader)
+        else:
+            raise IOError("unexpected instruction: 0x%X" % ins)
+        if ins != 0xC3:
+            raise IOError("unexpected instruction: 0x%X" % ins)
+
+        self.kbdtables = BinaryObject(self._extract_fixed(table_rva, 11 * self.architecture.long_pointer + 16),
+                                      alignment=self.architecture.long_pointer)
 
     def compile_dir_resource(self):
         def version_word():
@@ -356,6 +642,11 @@ class WinDll:
         rsrc.append(info)
 
         self.dir_resource = rsrc
+
+    def decompile_dir_resource(self):
+        # TODO
+
+        warn("not implemented")
 
     def link(self):
         base = self.align_section
@@ -529,6 +820,82 @@ class WinDll:
         header.append_padding(self.align_file)
 
         self.sec_HEADER = header
+
+    def decompile_header(self):
+        reader = BinaryObjectReader(self.assembly)
+
+        reader.read_or_fail(b"MZ")  # MZ header -- file signature
+        reader.offset = 0x3C
+
+        # TODO extract notice
+
+        reader.offset = DWORD.read(reader)      # -- PE header --
+        reader.read_or_fail(b"PE\0\0")          # Signature
+                                                            #   -- COFF header --
+        coff_machine = WORD.read(reader)                    # Machine
+        if coff_machine == 0x14C:
+            self.architecture = X86  # could be WOW64, checked later
+        elif coff_machine == 0x8664:
+            self.architecture = AMD64
+        else:
+            raise IOError("unknown architecture: %x" % coff_machine)
+        num_sections = WORD.read(reader)                    # NumberOfSections
+        self.timestamp = DWORD.read(reader)                 # TimeDateStamp
+        DWORD.read(reader)                                  # PointerToSymbolTable (deprecated)
+        DWORD.read(reader)                                  # NumberOfSymbol (deprecated)
+        opt_end = reader.offset + 4 + WORD.read(reader)     # SizeOfOptionalHeader
+        coff_characteristics = 0x210E if self.architecture.pointer == 4 else 0x2022
+        reader.read_or_warn(WORD(coff_characteristics))     # Characteristics
+
+                                                                # -- Optional Header --
+        opt_magic = 0x10B if self.architecture.pointer == 4 else 0x20B
+        reader.read_or_fail(WORD(opt_magic))                    # Magic
+        reader.offset += 26 if self.architecture.pointer == 4 else 22
+        self.base = DWORD_PTR(self.architecture).read(reader)   # ImageBase
+        if self.base != self.architecture.base:
+            warn("image uses base 0x%x instead of preferred 0x%d" % (self.base, self.architecture.base))
+        opt_align_section = DWORD.read(reader)                  # SectionAlignment
+        if opt_align_section != self.align_section:
+            warn("image uses section alignment 0x%x instead of preferred 0x%x" % (opt_align_section, self.align_section))
+            self.align_section = opt_align_section
+        opt_align_file = DWORD.read(reader)                     # FileAlignment
+        if opt_align_file != self.align_file:
+            warn("image uses file alignment 0x%x instead of preferred 0x%x" % (opt_align_file, self.align_file))
+            self.align_file = opt_align_file
+        reader.offset += 9 * 4 + 4 * self.architecture.pointer
+        opt_dir_len = DWORD.read(reader)                        # Directories
+        if opt_dir_len < 1:
+            raise IOError("no Export directory in image")
+        dir_export_rva = DWORD.read(reader)                     # Export - Rva
+        dir_export_len = DWORD.read(reader)                     # Export - Size
+        if dir_export_rva == 0:
+            raise IOError("no Export directory in image")
+        if opt_dir_len < 3:
+            dir_resource_rva = 0                                # Resource - Rva
+            dir_resource_len = 0                                # Resource - Size
+        else:
+            reader.offset += 8
+            dir_resource_rva = DWORD.read(reader)               # Resource - Rva
+            dir_resource_len = DWORD.read(reader)               # Resource - Size
+        if reader.offset > opt_end:
+            raise IOError("SizeOfOptionalHeader too low")
+        reader.offset = opt_end                     # -- Section Table --
+        self.sections = []
+        for _ in range(num_sections):
+            name = reader.read_bytes(8)             # Name
+            sec_len = DWORD.read(reader)            # VirtualSize
+            sec_rva = DWORD.read(reader)            # VirtualAddress
+            sec_file_len = DWORD.read(reader)       # SizeOfRawData
+            sec_file_off = DWORD.read(reader)       # PointerToRawData
+            reader.offset += 16
+            self.sections.append((sec_rva, sec_file_off))
+        self.sections.sort()
+
+        self.dir_export = BinaryObject(self._extract_fixed(dir_export_rva, dir_export_len), alignment=16)
+        if dir_resource_rva == 0:
+            warn("no Resource directory in image")
+        else:
+            self.dir_resource = BinaryObject(self._extract_fixed(dir_resource_rva, dir_resource_len), alignment=16)
 
     def assemble(self):
         for section in (self.sec_data, self.sec_rsrc, self.sec_reloc):

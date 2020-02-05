@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from . import _version
-from .linker_binary import Symbol, BinaryObject
+from .linker_binary import Symbol, BinaryObject, BinaryObjectReader
 
 
 __version__ = _version
@@ -58,6 +58,10 @@ class _WinInt:
     def __call__(self, value: int, align: bool = True):
         return BinaryObject(value.to_bytes(self.bytes, byteorder='little', signed=self.signed),
                             alignment=self.bytes if align else None)
+
+    def read(self, reader: BinaryObjectReader, align: bool = True):
+        return int.from_bytes(reader.read_bytes(self.bytes, alignment=self.bytes if align else None),
+                              byteorder='little', signed=self.signed)
 
 
 BYTE = _WinInt(1, signed=False)
@@ -106,6 +110,9 @@ def MAKELONG(low: int, high: int):
     return long
 
 
+MAKELONG.read = lambda reader: (WORD.read(reader), WORD.read(reader))
+
+
 def STR(text: str) -> BinaryObject:
     return BinaryObject((text + '\0').encode('ascii'), alignment=1)
 
@@ -125,6 +132,9 @@ def WCHAR(char: str) -> BinaryObject:
     if len(char) != 1:
         raise ValueError("char must have length 1")
     return BinaryObject(char.encode('utf-16le'))
+
+
+WCHAR.read = lambda reader, align=True: reader.read_bytes(2, alignment=2 if align else None).decode('utf-16le')
 
 
 @dataclass(frozen=True)
@@ -182,6 +192,12 @@ class LPTR(Symbol):
             if self.target is not None else 0
         data = offset.to_bytes(self.architecture.long_pointer, byteorder='little', signed=False)
         return BinaryObject(data, alignment=alignment)
+
+    @staticmethod
+    def read(reader: BinaryObjectReader, architecture: Architecture, align: bool = True):
+        alignment = architecture.long_pointer if align else None
+        data = reader.read_bytes(architecture.long_pointer, alignment=alignment)
+        return int.from_bytes(data, byteorder='little', signed=False)
 
 
 @dataclass(frozen=True)

@@ -21,6 +21,7 @@ from math import gcd
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Union, Tuple, Iterable, Dict
+from warnings import warn
 
 from . import _version
 
@@ -99,6 +100,59 @@ class BinaryObject:
             target, offset = target.placement
             address += offset
         return target, address
+
+
+class BinaryObjectReader:
+    target: BinaryObject
+    offset: int
+
+    def __init__(self, target: BinaryObject):
+        assert target is not None
+        self.target = target
+        self.offset = 0
+
+    def read_padding(self, alignment):
+        if self.target.alignment % alignment != 0:
+            raise ValueError('invalid padding alignment %i for object with alignment %i'
+                             % (alignment, self.target.alignment))
+        self.offset += (alignment - self.offset) % alignment
+
+    def read_bytes(self, length, alignment=0):
+        if alignment is not None and alignment > 0:
+            self.read_padding(alignment)
+        if self.offset + length > len(self.target.data):
+            raise IOError("end of stream")
+        data = self.target.data[self.offset : self.offset + length]
+        self.offset += length
+        return data
+
+    def read_or_warn(self, object: Union[bytes, BinaryObject], category=RuntimeWarning, message="read object differs"):
+        alignment = 0
+        if isinstance(object, bytes):
+            target = object
+        elif isinstance(object, BinaryObject):
+            target = object.data
+            alignment = object.alignment
+        else:
+            raise ValueError("invalid target object")
+
+        data = self.read_bytes(len(target), alignment)
+        if data != target:
+            warn(message, category, stacklevel=2)
+
+    def read_or_fail(self, object: Union[bytes, BinaryObject], category=IOError, message="read object differs"):
+        alignment = 0
+        if isinstance(object, bytes):
+            target = object
+        elif isinstance(object, BinaryObject):
+            target = object.data
+            alignment = object.alignment
+        else:
+            raise ValueError("invalid target object")
+
+        data = self.read_bytes(len(target), alignment)
+        if data != target:
+            raise category(message)
 
 
 def link(objects: Iterable[BinaryObject], base: int = 0) -> BinaryObject:
