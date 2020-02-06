@@ -147,7 +147,7 @@ class Layout:
     deadkeys: Dict[str, DeadKey] = field(default_factory=dict)
 
     def to_json(self) -> str:
-        return json.dumps(_asdict(self))
+        return json.dumps(_asdict(self), sort_keys=True)
 
     @classmethod
     def from_json(cls, string):

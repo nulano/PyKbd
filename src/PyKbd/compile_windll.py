@@ -129,11 +129,13 @@ class WinDll:
         vsc_to_vk_e1 = BinaryObject(alignment=4)
         for scan_code, key_code in self.layout.keymap.items():
             if scan_code.prefix == 0:
-                key_names.append(BYTE(scan_code.code))
-                key_names.append(LPTR(self.architecture, WSTR("%x" % scan_code.code)))  # TODO
+                if key_code.name != chr(key_code.win_vk):
+                    key_names.append(BYTE(scan_code.code))
+                    key_names.append(LPTR(self.architecture, WSTR(key_code.name)))
             elif scan_code.prefix == 0xE0:
-                key_names_ext.append(BYTE(scan_code.code))
-                key_names_ext.append(LPTR(self.architecture, WSTR("+%x" % scan_code.code)))  # TODO
+                if key_code.name != chr(key_code.win_vk):
+                    key_names_ext.append(BYTE(scan_code.code))
+                    key_names_ext.append(LPTR(self.architecture, WSTR(key_code.name)))
                 vsc_to_vk_e0.append(BYTE(scan_code.code))
                 vsc_to_vk_e0.append(USHORT(key_code.win_vk))
             elif scan_code.prefix == 0xE1:
@@ -205,6 +207,7 @@ class WinDll:
             self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
 
+        # only Pause key, no name table
         vsc_to_vk_e1 = BinaryObjectReader(self.kbd_vsc_to_vk_e1)
         while True:
             vsc = BYTE.read(vsc_to_vk_e1)
@@ -212,12 +215,12 @@ class WinDll:
                 break
             vk = USHORT.read(vsc_to_vk_e1) & 0xFF  # TODO attributes
             scancode = ScanCode(vsc, 0xE1)
-            name = names.get(scancode, chr(vk))
+            if vsc == 0x1D:
+                name = "Pause"
+            else:
+                name = "0x%X" % vsc
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0xE1 0x%x" % vsc)
-            if vk in self.vk_names:
-                warn("replacing duplicate vk name: (0x%x) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
-            self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
         
     def compile_kbd_charmap(self):
@@ -455,7 +458,7 @@ class WinDll:
             self.kbd_key_names_dead = BinaryObject(self._extract_array(key_names_dead_rva, self.architecture.long_pointer)[0], alignment=8)
 
         vsc_to_vk_rva = LPTR.read(kbdtables, self.architecture) - self.base
-        vsc_to_vk_len = BYTE.read(kbdtables) + 1
+        vsc_to_vk_len = BYTE.read(kbdtables)
         self.kbd_vsc_to_vk = BinaryObject(self._extract_fixed(vsc_to_vk_rva, 2 * vsc_to_vk_len), alignment=8)
 
         vsc_to_vk_e0_rva = LPTR.read(kbdtables, self.architecture) - self.base

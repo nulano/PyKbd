@@ -44,6 +44,7 @@ def layout():
                   {
                       ScanCode(0x10): KeyCode('Q', ord('Q')),
                       ScanCode(0x11): KeyCode('W', ord('W')),
+                      ScanCode(0x3B): KeyCode('F1', 0x70),
                       ScanCode(0x47, 0xE0): KeyCode('Home', 0x24),
                       ScanCode(0x1D, 0xE1): KeyCode('Pause', 0x13),
                   }, {
@@ -324,3 +325,31 @@ def test_assemble(windll: WinDll):
 
 def test_compile(windll: WinDll):
     assert windll.compile() == bytes(windll.assembly.data)
+
+
+def test_decompile(windll: WinDll):
+    version_str = '.'.join(map(str, windll.layout.version))
+
+    windll2 = WinDll()
+    windll2.decompile(windll.assembly.data)
+
+    assert windll2.layout.name.endswith(version_str)
+    windll2.layout.name = windll2.layout.name[:-len(version_str)-1]
+    assert windll2.layout == windll.layout
+
+
+@pytest.mark.parametrize("name", [
+    "KBDSL1_WINXP_X86",
+    "KBDSL1_WIN7_X86",
+    "KBDSL1_WIN7_AMD64",
+    "KBDSL1_WIN7_WOW64",
+    "KBDUS_WIN10_AMD64",
+])
+def test_decompile_system(name):
+    windll = WinDll()
+    with open("../test_files/"+name+".dll", "rb") as f:
+        windll.decompile(f.read())
+    # with open("../test_files/"+name+".json", "w") as f:
+    #     f.write(windll.layout.to_json())
+    with open("../test_files/"+name+".json", "r") as f:
+        assert windll.layout.to_json() == f.read()

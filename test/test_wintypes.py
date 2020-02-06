@@ -24,15 +24,19 @@ from PyKbd.wintypes import *
 
 # helpers for int types
 
-def check_valid(func: Callable[[int], BinaryObject], values: Iterable[Tuple[int, bytes]]):
+def check_valid(func, values: Iterable[Tuple[int, bytes]]):
     for value, target in values:
         returned = func(value)
         assert target == returned.data, "for value %x" % value
         assert len(target) == returned.alignment, "for value %x" % value
+        reader = BinaryObjectReader(returned)
+        assert value == func.read(reader), "for value %x" % value
     for value, target in values:
         returned = func(value, False)
         assert target == returned.data, "for value %x" % value
         assert 1 == returned.alignment, "for value %x" % value
+        reader = BinaryObjectReader(returned)
+        assert value == func.read(reader, False), "for value %x" % value
 
 
 def check_overflow(func: Callable[[int], BinaryObject], values: Iterable[int]):
