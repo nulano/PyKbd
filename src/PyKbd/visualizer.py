@@ -148,3 +148,34 @@ def draw_keyboard(layout: Layout, keyboard: Keyboard):
             if row.right is not None:
                 draw_key((len(row.keys) + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, row.right_width * key_size, group.height * key_size, draw, layout, ScanCode(row.right, group.prefix), font)
     return im
+
+
+def draw_dead_keys(layout: Layout):
+    import networkx as nx
+    import matplotlib.pyplot as plt
+
+    edge_labels = {}
+
+    G = nx.DiGraph()
+    G.add_nodes_from(layout.deadkeys.keys())
+    for accent, characters in layout.deadkeys.items():
+        for character, result in characters.charmap.items():
+            if result.char == '\0':
+                continue
+            G.add_node(result.char)
+            edge_labels[(accent, result.char)] = character
+    G.add_edges_from(edge_labels.keys(), weight=0.6)
+    print("num edges: %d" % len(edge_labels))
+
+    plt.figure(figsize=(len(G.nodes) / 2 + 10, 10))
+    try:
+        pos = nx.nx_agraph.graphviz_layout(G, prog='dot', args='-Kdot')
+    except ImportError:
+        try:
+            pos = nx.kamada_kawai_layout(G)
+        except ImportError:
+            pos = nx.spring_layout(G)
+    nx.draw(G, pos, node_size=1000, node_color='0.7')
+    nx.draw_networkx_labels(G, pos, font_size=24, font_family='Segoe UI')
+    nx.draw_networkx_edge_labels(G, pos, edge_labels, font_size=18, font_family='Segoe UI')
+    plt.show()
