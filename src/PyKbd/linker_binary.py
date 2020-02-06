@@ -106,10 +106,10 @@ class BinaryObjectReader:
     target: BinaryObject
     offset: int
 
-    def __init__(self, target: BinaryObject):
+    def __init__(self, target: BinaryObject, offset: int = 0):
         assert target is not None
         self.target = target
-        self.offset = 0
+        self.offset = offset
 
     def read_padding(self, alignment):
         if self.target.alignment % alignment != 0:

@@ -121,6 +121,19 @@ def WSTR(text: str, align: bool = True) -> BinaryObject:
     return BinaryObject((text + '\0').encode('utf-16le'), alignment=2 if align else None)
 
 
+def _WSTR_read(reader: BinaryObjectReader, align: bool = True) -> str:
+    data = bytearray()
+    while True:
+        char = reader.read_bytes(2, alignment=2 if align else None)
+        if char == b"\0\0":
+            break
+        data.extend(char)
+    return data.decode('utf-16le')
+
+
+WSTR.read = _WSTR_read
+
+
 # def CHAR(char: str) -> BinaryObject:
 #     if len(char) != 1:
 #         raise ValueError("char must have length 1")

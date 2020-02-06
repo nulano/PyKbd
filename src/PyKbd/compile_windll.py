@@ -647,9 +647,70 @@ class WinDll:
         self.dir_resource = rsrc
 
     def decompile_dir_resource(self):
-        # TODO
+        if self.dir_resource is None:
+            warn("no resources")
+            return
 
-        warn("decompile resources not implemented")
+        try:
+            entry_loc = _RSRC_TABLE_read(BinaryObjectReader(self.dir_resource))
+            info_entry = entry_loc.get(0x10, {}).get(1, {}).get(0x409)
+            if info_entry is None:
+                warn("no version info")
+                return
+            info_rva, info_len, info_cp = info_entry
+            info_data = BinaryObject(self._extract_fixed(info_rva, info_len), alignment=4)
+
+            def read_node(reader: BinaryObjectReader):
+                reader.read_padding(4)
+                end = reader.offset + WORD.read(reader)
+                value_len = WORD.read(reader)
+                is_text = WORD.read(reader) == 1
+                name = WSTR.read(reader)
+                reader.read_padding(4)
+                if is_text:
+                    data = reader.read_bytes(2 * value_len).decode('utf-16le')
+                else:
+                    data = BinaryObject(reader.read_bytes(value_len), alignment=4)
+                children = {}  # perhaps this should be an multimap? it doesn't matter for version info
+                reader.read_padding(4)
+                while reader.offset < end:
+                    child_name, child_value, child_children = read_node(reader)
+                    children[child_name] = (child_value, child_children)
+                    reader.read_padding(4)
+                return name, data, children
+
+            vs_version_info, info_fixed, info_other = read_node(BinaryObjectReader(info_data))
+
+            if vs_version_info != "VS_VERSION_INFO":
+                warn("invalid resources, skipping")
+                return
+
+            # use file version as layout version
+            version_minor, version_major = MAKELONG.read(BinaryObjectReader(info_fixed, 8))
+            self.layout.version = (version_major, version_minor)
+
+            info_string = info_other.get('StringFileInfo')
+            if info_string is None:
+                warn("no StringFileInfo")
+            else:
+                info_string = info_string[1]
+                for lang, (_, strings) in info_string.items():
+                    cp, lang = MAKELONG.read(BinaryObjectReader(BinaryObject(bytes.fromhex(lang)[::-1], alignment=4)))
+                    if cp == 1200:  # utf-16le
+                        print("using StringFileInfo for language 0x%X" % lang)
+                        self.layout.name = strings.get("FileDescription", strings.get("ProductName", ("\0", {})))[0][:-1]
+                        if "FileVersion" in strings:
+                            self.layout.name += " " + strings["FileVersion"][0][:-1]
+                        elif "ProductVersion" in strings:
+                            self.layout.name += " " + strings["ProductVersion"][0][:-1]
+                        self.layout.author = strings.get("CompanyName", ("\0", {}))[0][:-1]
+                        self.layout.copyright = strings.get("LegalCopyright", ("\0", {}))[0][:-1]
+                        self.layout.dll_name = strings.get("OriginalFilename", ("\0", {}))[0][:-1]
+                        break
+                else:
+                    warn("no usable StringFileInfo found")
+        except Exception as e:
+            warn(e)
 
     def link(self):
         base = self.align_section
@@ -914,6 +975,7 @@ class WinDll:
 
 
 _RSRC_TABLE_ENTRIES = Dict[Union[int, str], Union[Tuple[BinaryObject, int], '_RSRC_TABLE_ENTRIES']]
+_RSRC_TABLE_ENTRY_OFFSETS = Dict[Union[int, str], Union[Tuple[int, int, int], '_RSRC_TABLE_ENTRY_OFFSETS']]
 
 
 @dataclass(frozen=True)
@@ -933,6 +995,14 @@ def _RSRC_ENTRY(data: BinaryObject, codepage: int):
     rsrc.append(DWORD(codepage))
     rsrc.append(DWORD(0))
     return rsrc
+
+
+def _RSRC_ENTRY_read(reader: BinaryObjectReader) -> Tuple[int, int, int]:
+    rva = DWORD.read(reader)
+    len = DWORD.read(reader)
+    cp = DWORD.read(reader)
+    reader.read_or_warn(DWORD(0))  # reserved
+    return rva, len, cp
 
 
 def _RSRC_TABLE(entries: _RSRC_TABLE_ENTRIES):
@@ -980,6 +1050,43 @@ def _RSRC_TABLE(entries: _RSRC_TABLE_ENTRIES):
     table.extend(children)
 
     return table, strings
+
+
+def _RSRC_TABLE_read(reader: BinaryObjectReader) -> _RSRC_TABLE_ENTRIES:
+    reader.read_or_warn(bytes(b"\0\0\0\0\0\0\0\0\0\0\0\0"))
+    name_entries_len = WORD.read(reader)
+    id_entries_len = WORD.read(reader)
+
+    entries = {}
+
+    for _ in range(name_entries_len):
+        name_off = DWORD.read(reader)
+        name_reader = BinaryObjectReader(reader.target, name_off)
+        name_len = WORD.read(name_reader)
+        name = name_reader.read_bytes(2 * name_len).decode('utf-16le')
+
+        data_off = DWORD.read(reader)
+        is_table = (data_off & 0x80000000) != 0
+        data_off = data_off & 0x7FFFFFFF
+        if is_table:
+            data = _RSRC_TABLE_read(BinaryObjectReader(reader.target, data_off))
+        else:
+            data = _RSRC_ENTRY_read(BinaryObjectReader(reader.target, data_off))
+        entries[name] = data
+
+    for _ in range(id_entries_len):
+        key = DWORD.read(reader)
+
+        data_off = DWORD.read(reader)
+        is_table = (data_off & 0x80000000) != 0
+        data_off = data_off & 0x7FFFFFFF
+        if is_table:
+            data = _RSRC_TABLE_read(BinaryObjectReader(reader.target, data_off))
+        else:
+            data = _RSRC_ENTRY_read(BinaryObjectReader(reader.target, data_off))
+        entries[key] = data
+
+    return entries
 
 
 def RSRC_TABLES(entries: _RSRC_TABLE_ENTRIES):

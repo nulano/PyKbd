@@ -139,7 +139,7 @@ def draw_keyboard(layout: Layout, keyboard: Keyboard):
     im = Image.new("RGB", (23 * key_size + 1, int(7 * key_size) + 1), (255, 255, 255))
     draw = ImageDraw.Draw(im, "RGB")
     font = ImageFont.truetype('segoeui', 24)
-    draw_text(draw, 23 / 2 * key_size, 0.25 * key_size, font, layout.name)
+    draw_text(draw, 23 / 2 * key_size, 0.25 * key_size, font, layout.name + " by " + layout.author)
     for ox, oy, group in keyboard.groups:
         for y, row in enumerate(group.rows):
             if row.left is not None:
