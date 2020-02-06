@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from dataclasses import dataclass
+from math import sqrt
 from typing import Optional, List, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
@@ -164,18 +165,23 @@ def draw_dead_keys(layout: Layout):
                 continue
             G.add_node(result.char)
             edge_labels[(accent, result.char)] = character
-    G.add_edges_from(edge_labels.keys(), weight=0.6)
+    G.add_edges_from(edge_labels.keys(), weight=1)
     print("num edges: %d" % len(edge_labels))
 
-    plt.figure(figsize=(len(G.nodes) / 2 + 10, 10))
+    plt.figure(figsize=(2 * sqrt(len(G.nodes)), 2 * sqrt(len(G.nodes))))
     try:
-        pos = nx.nx_agraph.graphviz_layout(G, prog='dot', args='-Kdot')
+        # good params: dot, sfdp
+        pos = nx.nx_agraph.graphviz_layout(G, prog='dot', args='-Ksfdp')
     except ImportError:
         try:
             pos = nx.kamada_kawai_layout(G)
         except ImportError:
             pos = nx.spring_layout(G)
-    nx.draw(G, pos, node_size=1000, node_color='0.7')
-    nx.draw_networkx_labels(G, pos, font_size=24, font_family='Segoe UI')
-    nx.draw_networkx_edge_labels(G, pos, edge_labels, font_size=18, font_family='Segoe UI')
-    plt.show()
+    nx.draw(G, pos, node_size=200, node_color='0.7')
+    nx.draw_networkx_labels(G, pos, font_size=10, font_family='Segoe UI')
+    nx.draw_networkx_edge_labels(G, pos, edge_labels, font_size=10, font_family='Segoe UI')
+    canvas = plt.get_current_fig_manager().canvas
+    canvas.draw()
+    im = Image.frombytes('RGB', canvas.get_width_height(), canvas.tostring_rgb())
+    # plt.show()
+    return im

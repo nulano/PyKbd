@@ -1,5 +1,6 @@
 
 import sys
+from time import sleep
 
 from PyKbd.compile_windll import WinDll
 from PyKbd.layout import Layout
@@ -11,4 +12,5 @@ with open(sys.argv[1], "rb") as f:
     windll.decompile(f.read())
 
 draw_keyboard(windll.layout, ISO).show()
-draw_dead_keys(windll.layout)
+draw_dead_keys(windll.layout).show()
+sleep(5)
