@@ -70,9 +70,9 @@ class WinDll:
     align_file: int = 0x200
     align_section: int = 0x1000
 
-    def __init__(self, layout: Layout, architecture: Architecture):
-        self.layout = layout
-        self.architecture = architecture
+    def __init__(self, layout: Optional[Layout] = None, architecture: Optional[Architecture] = None):
+        self.layout = layout or Layout()
+        self.architecture = architecture or AMD64
 
         self.timestamp = int(time())
 
@@ -230,8 +230,10 @@ class WinDll:
         max_mask = 0
         shift_states = []
         shift_state_map = {}
+        key_to_vk = {}
         for scancode, keycode in self.layout.keymap.items():
-            for shiftstate, character in self.layout.charmap.get(keycode, {}).items():
+            key_to_vk[keycode.name] = keycode.win_vk
+            for shiftstate, character in self.layout.charmap.get(keycode.name, {}).items():
                 if not shiftstate in shift_state_map:
                     shift_state_map[shiftstate] = len(shift_state_map)
                     shift_states.append(shiftstate)
@@ -251,8 +253,11 @@ class WinDll:
 
         vk_to_wchars = BinaryObject(alignment=2)
         for keycode, characters in self.layout.charmap.items():
+            if keycode not in key_to_vk:
+                warn("unmapped key, skipping: " + keycode)
+                continue
             dead = None
-            vk_to_wchars.append(BYTE(keycode.win_vk))
+            vk_to_wchars.append(BYTE(key_to_vk[keycode]))
             vk_to_wchars.append(BYTE(0))  # Attributes  # TODO
             for shiftstate in range(len(shift_states)):
                 character = characters.get(shift_states[shiftstate], Character("\uF000"))  # WCH_NONE
@@ -334,7 +339,7 @@ class WinDll:
             while row < vk_to_wchar_rows:
                 vk = BYTE.read(vk_to_wchar)
                 attributes = BYTE.read(vk_to_wchar)  # TODO
-                keycode = KeyCode(self.vk_names.get(vk, chr(vk)), vk)
+                keycode = self.vk_names.get(vk, chr(vk))
                 dead = None
                 characters = {}
                 for col in range(vk_to_wchar_cols):

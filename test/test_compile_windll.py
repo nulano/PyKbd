@@ -47,8 +47,8 @@ def layout():
                       ScanCode(0x47, 0xE0): KeyCode('Home', 0x24),
                       ScanCode(0x1D, 0xE1): KeyCode('Pause', 0x13),
                   }, {
-                      KeyCode('Q', ord('Q')): {ShiftState(): Character('q'), ShiftState(shift=True): Character('Q')},
-                      KeyCode('W', ord('W')): {ShiftState(): Character('w', dead=True)},
+                      'Q': {ShiftState(): Character('q'), ShiftState(shift=True): Character('Q')},
+                      'W': {ShiftState(): Character('w', dead=True)},
                   }, {
                       'w': DeadKey("Test W", {'w': Character('w', dead=True), 'q': Character('q')}),
                   })
