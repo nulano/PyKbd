@@ -1,6 +1,6 @@
 # This file is part of PyKbd
 #
-# Copyright (C) 2019  Nulano
+# Copyright (C) 2019-2020  Nulano
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as

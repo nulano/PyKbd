@@ -1,6 +1,6 @@
 # This file is part of PyKbd
 #
-# Copyright (C) 2019  Nulano
+# Copyright (C) 2019-2020  Nulano
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -178,7 +178,7 @@ class WinDll:
         vsc_to_vk = BinaryObjectReader(self.kbd_vsc_to_vk)
         vsc_to_vk_len = len(self.kbd_vsc_to_vk.data) // 2
         for vsc in range(vsc_to_vk_len):
-            vk = USHORT.read(vsc_to_vk)  # TODO attributes
+            vk = USHORT.read(vsc_to_vk) & 0xFF  # TODO attributes
             if vk == 0xFF:
                 continue
             scancode = ScanCode(vsc)
@@ -186,7 +186,7 @@ class WinDll:
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0x%x" % vsc)
             if vk in self.vk_names:
-                warn("replacing duplicate vk name: 0x%x" % vk)
+                warn("replacing duplicate vk name: (0x%x) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
             self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
 
@@ -195,13 +195,13 @@ class WinDll:
             vsc = BYTE.read(vsc_to_vk_e0)
             if vsc == 0:
                 break
-            vk = USHORT.read(vsc_to_vk_e0)  # TODO attributes
+            vk = USHORT.read(vsc_to_vk_e0) & 0xFF  # TODO attributes
             scancode = ScanCode(vsc, 0xE0)
             name = names.get(scancode, chr(vk))
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0xE0 0x%x" % vsc)
             if vk in self.vk_names:
-                warn("replacing duplicate vk name: 0x%x" % vk)
+                warn("replacing duplicate vk name: (0x%x) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
             self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
 
@@ -210,13 +210,13 @@ class WinDll:
             vsc = BYTE.read(vsc_to_vk_e1)
             if vsc == 0:
                 break
-            vk = USHORT.read(vsc_to_vk_e1)  # TODO attributes
+            vk = USHORT.read(vsc_to_vk_e1) & 0xFF  # TODO attributes
             scancode = ScanCode(vsc, 0xE1)
             name = names.get(scancode, chr(vk))
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0xE1 0x%x" % vsc)
             if vk in self.vk_names:
-                warn("replacing duplicate vk name: 0x%x" % vk)
+                warn("replacing duplicate vk name: (0x%x) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
             self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
         
@@ -394,7 +394,7 @@ class WinDll:
                 if accent not in self.layout.deadkeys:
                     self.layout.deadkeys[accent] = DeadKey(dead_key_names.get(accent, accent), {})
                 if character in self.layout.deadkeys[accent].charmap:
-                    warn("replacing duplicate dead key")
+                    warn("replacing duplicate dead key: '%s' + '%s'" % (accent, character))
                 self.layout.deadkeys[accent].charmap[character] = composed
 
     def compile_tables(self):
@@ -513,6 +513,9 @@ class WinDll:
         reader.read_or_warn(DWORD(1))       # Number of Name Pointers
         addresses = DWORD.read(reader)      # Export Address Table RVA
 
+        # TODO this is temporary
+        self.layout.name = self._extract_array(dll_name_rva, 1)[0][:-1].decode('utf-8')
+
         func_rva = DWORD.read(BinaryObjectReader(BinaryObject(self._extract_fixed(addresses, 4), alignment=4)))
         # function is typically shorter than 16 bytes
         func = BinaryObject(self._extract_fixed(func_rva, 16), alignment=4)
@@ -532,7 +535,7 @@ class WinDll:
                 ins = BYTE.read(reader)
         elif ins == 0x8D:  # LEA ...
             reader.read_or_fail(BYTE(0x05))  # (ModRM) ... [EAX] + disp32
-            table_rva = DWORD.read(reader, align=False)
+            table_rva = INT.read(reader, align=False)
             table_rva += func_rva + reader.offset
             ins = BYTE.read(reader)
         else:
@@ -646,7 +649,7 @@ class WinDll:
     def decompile_dir_resource(self):
         # TODO
 
-        warn("not implemented")
+        warn("decompile resources not implemented")
 
     def link(self):
         base = self.align_section
@@ -853,7 +856,7 @@ class WinDll:
         reader.offset += 26 if self.architecture.pointer == 4 else 22
         self.base = DWORD_PTR(self.architecture).read(reader)   # ImageBase
         if self.base != self.architecture.base:
-            warn("image uses base 0x%x instead of preferred 0x%d" % (self.base, self.architecture.base))
+            warn("image uses base 0x%x instead of preferred 0x%x" % (self.base, self.architecture.base))
         opt_align_section = DWORD.read(reader)                  # SectionAlignment
         if opt_align_section != self.align_section:
             warn("image uses section alignment 0x%x instead of preferred 0x%x" % (opt_align_section, self.align_section))
