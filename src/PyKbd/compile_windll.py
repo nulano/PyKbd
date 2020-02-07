@@ -120,7 +120,7 @@ class WinDll:
         vsc_to_vk = BinaryObject(alignment=4)
         for vsc in range(max(map(lambda k: k.code, filter(lambda k: k.prefix == 0, self.layout.keymap))) + 1):
             key = self.layout.keymap.get(ScanCode(vsc), KeyCode("invalid", 0xFF))
-            vsc_to_vk.append(USHORT(key.win_vk))  # TODO attributes
+            vsc_to_vk.append(USHORT(key.win_vk))
         self.kbd_vsc_to_vk = vsc_to_vk
 
         key_names = BinaryObject(alignment=8)  # TODO non-printable only
@@ -180,15 +180,15 @@ class WinDll:
         vsc_to_vk = BinaryObjectReader(self.kbd_vsc_to_vk)
         vsc_to_vk_len = len(self.kbd_vsc_to_vk.data) // 2
         for vsc in range(vsc_to_vk_len):
-            vk = USHORT.read(vsc_to_vk) & 0xFF  # TODO attributes
-            if vk == 0xFF:
+            vk = USHORT.read(vsc_to_vk)
+            if vk == 0xFF or vk == 0:
                 continue
             scancode = ScanCode(vsc)
             name = names.get(scancode, chr(vk))
             if scancode in self.layout.keymap:
-                warn("replacing duplicate scancode: 0x%x" % vsc)
+                warn("replacing duplicate scancode: 0x%X" % vsc)
             if vk in self.vk_names:
-                warn("replacing duplicate vk name: (0x%x) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
+                warn("replacing duplicate vk name: (0x%X) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
             self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
 
@@ -197,13 +197,13 @@ class WinDll:
             vsc = BYTE.read(vsc_to_vk_e0)
             if vsc == 0:
                 break
-            vk = USHORT.read(vsc_to_vk_e0) & 0xFF  # TODO attributes
+            vk = USHORT.read(vsc_to_vk_e0)
             scancode = ScanCode(vsc, 0xE0)
             name = names.get(scancode, chr(vk))
             if scancode in self.layout.keymap:
-                warn("replacing duplicate scancode: 0xE0 0x%x" % vsc)
+                warn("replacing duplicate scancode: 0xE0 0x%X" % vsc)
             if vk in self.vk_names:
-                warn("replacing duplicate vk name: (0x%x) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
+                warn("replacing duplicate vk name: (0x%X) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
             self.vk_names[vk] = name
             self.layout.keymap[scancode] = KeyCode(name, vk)
 
@@ -213,30 +213,54 @@ class WinDll:
             vsc = BYTE.read(vsc_to_vk_e1)
             if vsc == 0:
                 break
-            vk = USHORT.read(vsc_to_vk_e1) & 0xFF  # TODO attributes
+            vk = USHORT.read(vsc_to_vk_e1)
             scancode = ScanCode(vsc, 0xE1)
             if vsc == 0x1D:
                 name = "Pause"
             else:
                 name = "0x%X" % vsc
             if scancode in self.layout.keymap:
-                warn("replacing duplicate scancode: 0xE1 0x%x" % vsc)
+                warn("replacing duplicate scancode: 0xE1 0x%X" % vsc)
             self.layout.keymap[scancode] = KeyCode(name, vk)
         
     def compile_kbd_charmap(self):
         vk_to_bits = BinaryObject(alignment=4)
-        for key, shift in {0x10: 1, 0x11: 2, 0x12: 4, 0x15: 8}.items():  # TODO
+        for key, shift in {0x10: 1, 0x11: 2, 0x12: 4, 0x15: 8}.items():  # pretty much guaranteed
             vk_to_bits.append(BYTE(key))
             vk_to_bits.append(BYTE(shift))
         vk_to_bits.append(WORD(0))  # end of table
 
+        vk_translate = {
+            # drop KBDEXT for VK_DIVIDE and VK_CANCEL
+            0x16F: 0x6F, 0x103: 0x03,
+            # drop KBDSPECIAL for VK_MULTIPLY if present
+            # note: KBDSPECIAL is preserved for special keys without characters
+            0x26A: 0x6A,
+            # apply KBDNUMPAD | KBDSPECIAL translation to VK_NUMPAD* and VK_DECIMAL
+            0xC24: 0x67, 0xC26: 0x68, 0xC21: 0x69,
+            0xC25: 0x64, 0xC0C: 0x65, 0xC27: 0x66,
+            0xC23: 0x61, 0xC28: 0x62, 0xC22: 0x63,
+            0xC2D: 0x60, 0xC2E: 0x6E,
+        }
         max_mask = 0
         shift_states = []
         shift_state_map = {}
         key_to_vk = {}
         for scancode, keycode in self.layout.keymap.items():
-            key_to_vk[keycode.name] = keycode.win_vk
-            for shiftstate, character in self.layout.charmap.get(keycode.name, {}).items():
+            if keycode.name not in self.layout.charmap:
+                continue
+            vk = keycode.win_vk
+            if vk == 0xFF or vk == 0:
+                warn("invalid vk, skipping: 0x%X" % vk)
+                continue
+            if vk > 0xFF:
+                try:
+                    vk = vk_translate[vk]
+                except KeyError:
+                    warn("unknown special vk, skipping: 0x%X" % vk)
+                    continue
+            key_to_vk[keycode.name] = vk
+            for shiftstate, character in self.layout.charmap[keycode.name].items():
                 if not shiftstate in shift_state_map:
                     shift_state_map[shiftstate] = len(shift_state_map)
                     shift_states.append(shiftstate)
@@ -327,6 +351,17 @@ class WinDll:
             if column != 0xF:
                 shift_state_map[column] = ShiftState.from_win_mask(mask)  # TODO use bit_to_vk
 
+        vk_translate = {
+            # add KBDEXT to VK_DIVIDE and VK_CANCEL
+            0x6F: 0x16F, 0x03: 0x103,
+            # add KBDSPECIAL to VK_MULTIPLY
+            0x6A: 0x26A,
+            # translate VK_NUMPAD* and VK_DECIMAL to KBDNUMPAD | KBDSPECIAL navigation keys
+            0x67: 0xC24, 0x68: 0xC26, 0x69: 0xC21,
+            0x64: 0xC25, 0x65: 0xC0C, 0x66: 0xC27,
+            0x61: 0xC23, 0x62: 0xC28, 0x63: 0xC22,
+            0x60: 0xC2D, 0x6E: 0xC2E,
+        }
         vk_to_wchar_table = BinaryObjectReader(self.kbd_vk_to_wchar_table)
         while True:
             vk_to_wchar_ptr = LPTR.read(vk_to_wchar_table, self.architecture)
@@ -342,7 +377,10 @@ class WinDll:
             while row < vk_to_wchar_rows:
                 vk = BYTE.read(vk_to_wchar)
                 attributes = BYTE.read(vk_to_wchar)  # TODO
-                keycode = self.vk_names.get(vk, chr(vk))
+                if vk not in self.vk_names and vk in vk_translate:
+                    keycode = self.vk_names.get(vk_translate[vk], chr(vk_translate[vk]))
+                else:
+                    keycode = self.vk_names.get(vk, chr(vk))
                 dead = None
                 characters = {}
                 for col in range(vk_to_wchar_cols):

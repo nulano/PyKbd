@@ -353,3 +353,24 @@ def test_decompile_system(name):
     #     f.write(windll.layout.to_json())
     with open("../test_files/"+name+".json", "r") as f:
         assert windll.layout.to_json() == f.read()
+
+
+@pytest.mark.parametrize("name", [
+    "KBDSL1_WINXP_X86",
+    "KBDSL1_WIN7_X86",
+    "KBDSL1_WIN7_AMD64",
+    "KBDSL1_WIN7_WOW64",
+    "KBDUS_WIN10_AMD64",
+])
+def test_recompile_system(name):
+    with open("../test_files/"+name+".dll", "rb") as f:
+        windll = WinDll()
+        windll.decompile(f.read())
+        layout, architecture = windll.layout, windll.architecture
+    windll = WinDll(layout, architecture)
+    data = windll.compile()
+    windll = WinDll()
+    windll.decompile(data)
+    layout.name += " %d.%d" % layout.version
+    assert windll.layout == layout
+    assert windll.architecture == architecture

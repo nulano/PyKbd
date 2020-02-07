@@ -25,8 +25,8 @@ from PyKbd.layout import Layout, ShiftState, ScanCode, KeyCode
 
 @dataclass(frozen=True)
 class Row:
-    left_width: float
-    left: Optional[int]
+    left_width: float = 0
+    left: Optional[int] = None
     keys: List[int] = ()
     right: Optional[int] = None
     right_width: float = 0
@@ -47,10 +47,12 @@ class Keyboard:
 
 ISO = Keyboard([
     # Function Keys
-    (0, 0.5, Group([Row(2.00, 0x01)])),
-    (3, 0.5, Group([Row(0.00, None, [0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x57, 0x58])])),
-    (15.5, 0.5, Group([Row(0, None, [0x54, 0x46])])),
-    (17.5, 0.5, Group([Row(0, None, [0x1D])], 0xE1)),
+    (0, 0.5, Group([Row(1.50, 0x01)])),
+    (2, 0.5, Group([Row(keys=[0x3B, 0x3C, 0x3D, 0x3E])])),
+    (6.5, 0.5, Group([Row(keys=[0x3F, 0x40, 0x41, 0x42])])),
+    (11, 0.5, Group([Row(keys=[0x43, 0x44, 0x57, 0x58])])),
+    (15.5, 0.5, Group([Row(keys=[0x54, 0x46])])),
+    (17.5, 0.5, Group([Row(keys=[0x1D])], 0xE1)),
 
     # Main
     (0, 2, Group([
@@ -70,24 +72,24 @@ ISO = Keyboard([
 
     # Navigation
     (15.5, 2, Group([
-        Row(0, None, [0x52, 0x47, 0x49]),
-        Row(0, None, [0x53, 0x4F, 0x51]),
+        Row(keys=[0x52, 0x47, 0x49]),
+        Row(keys=[0x53, 0x4F, 0x51]),
     ], 0xE0)),
-    (16.5, 5, Group([Row(0, None, [0x48])], 0xE0)),
-    (15.5, 6, Group([Row(0, None, [0x4B, 0x50, 0x4D])], 0xE0)),
+    (16.5, 5, Group([Row(keys=[0x48])], 0xE0)),
+    (15.5, 6, Group([Row(keys=[0x4B, 0x50, 0x4D])], 0xE0)),
 
     # Numpad
-    (19, 2, Group([Row(0, None, [0x45])])),
-    (20, 2, Group([Row(0, None, [0x35])], 0xE0, special=False)),
-    (21, 2, Group([Row(0, None, [0x37, 0x4A])], special=False)),
+    (19, 2, Group([Row(keys=[0x45])])),
+    (20, 2, Group([Row(keys=[0x35])], 0xE0, special=False)),
+    (21, 2, Group([Row(keys=[0x37, 0x4A])], special=False)),
     (19, 3, Group([
-        Row(0, None, [0x47, 0x48, 0x49]),
-        Row(0, None, [0x4B, 0x4C, 0x4D]),
-        Row(0, None, [0x4F, 0x50, 0x51]),
+        Row(keys=[0x47, 0x48, 0x49]),
+        Row(keys=[0x4B, 0x4C, 0x4D]),
+        Row(keys=[0x4F, 0x50, 0x51]),
         Row(2, 0x52, [0x53]),
     ], special=False)),
-    (22, 3, Group([Row(0, None, [0x4E])], height=2, special=False)),
-    (22, 5, Group([Row(0, None, [0x1C])], 0xE0, height=2)),
+    (22, 3, Group([Row(keys=[0x4E])], height=2, special=False)),
+    (22, 5, Group([Row(keys=[0x1C])], 0xE0, height=2)),
 ])
 
 
@@ -101,21 +103,12 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
     keycode = layout.keymap.get(key)
     if keycode is None:
         return
-    numpad_translate = {
-        0x2D: 0x60, 0x2E: 0x6E,
-        0x23: 0x61, 0x28: 0x62, 0x22: 0x63,
-        0x25: 0x64, 0x0C: 0x65, 0x27: 0x66,
-        0x24: 0x67, 0x26: 0x68, 0x21: 0x69,
-    }
-    if key.prefix == 0 and keycode.win_vk in numpad_translate:
-        translated = numpad_translate[keycode.win_vk]
-        keycode = KeyCode(chr(translated), translated)
     if keycode.name != chr(keycode.win_vk) and not hide_name:
         draw_text(draw, x + w / 2, y + h / 2, font, keycode.name, color=(0, 0, 192))
-    elif keycode not in layout.charmap:
+    elif keycode.name not in layout.charmap:
         draw_text(draw, x + w / 2, y + h / 2, font, "0x%X" % keycode.win_vk, color=(0, 0, 192))
     else:
-        characters = layout.charmap[keycode]
+        characters = layout.charmap[keycode.name]
         for shiftstate, px, py in [
             (ShiftState(shift=True,  control=False, alt=False), 0.2, 0.25),
             (ShiftState(shift=False, control=False, alt=False), 0.2, 0.75),
