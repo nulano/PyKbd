@@ -103,10 +103,8 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
     keycode = layout.keymap.get(key)
     if keycode is None:
         return
-    if keycode.name != chr(keycode.win_vk) and not hide_name:
+    if keycode.name not in layout.charmap:
         draw_text(draw, x + w / 2, y + h / 2, font, keycode.name, color=(0, 0, 192))
-    elif keycode.name not in layout.charmap:
-        draw_text(draw, x + w / 2, y + h / 2, font, "0x%X" % keycode.win_vk, color=(0, 0, 192))
     else:
         characters = layout.charmap[keycode.name]
         for shiftstate, px, py in [

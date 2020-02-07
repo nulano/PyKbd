@@ -99,6 +99,7 @@ class WinDll:
         self.decompile_tables()
         self.decompile_kbd_keymap()
         self.decompile_kbd_charmap()
+        self.decompile_fix_names()
         self.decompile_dir_resource()
 
     def _extract_fixed(self, rva: int, size: int):
@@ -129,11 +130,11 @@ class WinDll:
         vsc_to_vk_e1 = BinaryObject(alignment=4)
         for scan_code, key_code in self.layout.keymap.items():
             if scan_code.prefix == 0:
-                if key_code.name != chr(key_code.win_vk):
+                if key_code.name != chr(key_code.win_vk & 0xFF):
                     key_names.append(BYTE(scan_code.code))
                     key_names.append(LPTR(self.architecture, WSTR(key_code.name)))
             elif scan_code.prefix == 0xE0:
-                if key_code.name != chr(key_code.win_vk):
+                if key_code.name != chr(key_code.win_vk & 0xFF):
                     key_names_ext.append(BYTE(scan_code.code))
                     key_names_ext.append(LPTR(self.architecture, WSTR(key_code.name)))
                 vsc_to_vk_e0.append(BYTE(scan_code.code))
@@ -184,7 +185,7 @@ class WinDll:
             if vk == 0xFF or vk == 0:
                 continue
             scancode = ScanCode(vsc)
-            name = names.get(scancode, chr(vk))
+            name = names.get(scancode, chr(vk & 0xFF))
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0x%X" % vsc)
             if vk in self.vk_names:
@@ -199,7 +200,7 @@ class WinDll:
                 break
             vk = USHORT.read(vsc_to_vk_e0)
             scancode = ScanCode(vsc, 0xE0)
-            name = names.get(scancode, chr(vk))
+            name = names.get(scancode, chr(vk & 0xFF))
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0xE0 0x%X" % vsc)
             if vk in self.vk_names:
@@ -218,7 +219,7 @@ class WinDll:
             if vsc == 0x1D:
                 name = "Pause"
             else:
-                name = "0x%X" % vsc
+                name = "0xE1%X" % vsc
             if scancode in self.layout.keymap:
                 warn("replacing duplicate scancode: 0xE1 0x%X" % vsc)
             self.layout.keymap[scancode] = KeyCode(name, vk)
@@ -285,7 +286,7 @@ class WinDll:
                 continue
             dead = None
             vk_to_wchars.append(BYTE(key_to_vk[keycode]))
-            vk_to_wchars.append(BYTE(0))  # Attributes  # TODO
+            vk_to_wchars.append(BYTE(0))  # Attributes  # TODO (CAPLOK, SGCAPS, CAPLOKALTGR, KANALOC)
             for shiftstate in range(len(shift_states)):
                 character = characters.get(shift_states[shiftstate], Character("\uF000"))  # WCH_NONE
                 if character.dead:
@@ -376,11 +377,11 @@ class WinDll:
             row = 0
             while row < vk_to_wchar_rows:
                 vk = BYTE.read(vk_to_wchar)
-                attributes = BYTE.read(vk_to_wchar)  # TODO
+                attributes = BYTE.read(vk_to_wchar)  # TODO (CAPLOK, SGCAPS, CAPLOKALTGR, KANALOC)
                 if vk not in self.vk_names and vk in vk_translate:
-                    keycode = self.vk_names.get(vk_translate[vk], chr(vk_translate[vk]))
+                    keycode = self.vk_names.get(vk_translate[vk])
                 else:
-                    keycode = self.vk_names.get(vk, chr(vk))
+                    keycode = self.vk_names.get(vk)
                 dead = None
                 characters = {}
                 for col in range(vk_to_wchar_cols):
@@ -411,6 +412,9 @@ class WinDll:
                             else:
                                 characters[shiftstate] = character
                     row += 1
+                if keycode is None:
+                    warn("vk 0x%X is mapped but not assigned to any vsc" % vk)
+                    keycode = characters.get(ShiftState(), chr(vk & 0xFF))
                 if keycode in self.layout.charmap:
                     warn("replacing duplicate keycode: " + str(keycode))
                 self.layout.charmap[keycode] = characters
@@ -442,6 +446,21 @@ class WinDll:
                 if character in self.layout.deadkeys[accent].charmap:
                     warn("replacing duplicate dead key: '%s' + '%s'" % (accent, character))
                 self.layout.deadkeys[accent].charmap[character] = composed
+
+    def decompile_fix_names(self):
+        rename = {}
+        for scancode, keycode in self.layout.keymap.items():
+            if keycode.name == chr(keycode.win_vk & 0xFF):
+                new_name = self.layout.charmap.get(keycode.name, {}).get(ShiftState())
+                if new_name is None:
+                    warn("unnamed vsc without vk character mapping: 0x%s" % scancode.to_string())
+                    rename[keycode.name] = "0x%X" % keycode.win_vk
+                else:
+                    rename[keycode.name] = new_name.char
+        self.layout.keymap = {scancode: KeyCode(rename.get(keycode.name, keycode.name), keycode.win_vk)
+                              for scancode, keycode in self.layout.keymap.items()}
+        self.layout.charmap = {rename.get(keycode, keycode): character
+                               for keycode, character in self.layout.charmap.items()}
 
     def compile_tables(self):
         kbdtables = BinaryObject(alignment=self.architecture.long_pointer)
