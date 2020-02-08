@@ -14,6 +14,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import dataclasses
 from bisect import bisect_left
 from collections import defaultdict
 from operator import itemgetter
@@ -63,7 +64,6 @@ class WinDll:
     # decompile-only
     base: Optional[int] = None
     sections: Optional[List[Tuple[int, int]]] = None
-    vk_names: Optional[Dict[int, str]] = None
 
     assembly: Optional[BinaryObject] = None
 
@@ -99,7 +99,8 @@ class WinDll:
         self.decompile_tables()
         self.decompile_kbd_keymap()
         self.decompile_kbd_charmap()
-        self.decompile_fix_names()
+        # self.decompile_kbd_ligature()
+        # self.decompile_fix_names()  # update default keymap names based on charmap
         self.decompile_dir_resource()
 
     def _extract_fixed(self, rva: int, size: int):
@@ -120,28 +121,28 @@ class WinDll:
     def compile_kbd_keymap(self):
         vsc_to_vk = BinaryObject(alignment=4)
         for vsc in range(max(map(lambda k: k.code, filter(lambda k: k.prefix == 0, self.layout.keymap))) + 1):
-            key = self.layout.keymap.get(ScanCode(vsc), KeyCode("invalid", 0xFF))
+            key = self.layout.keymap.get(ScanCode(vsc), KeyCode(0xFF))
             vsc_to_vk.append(USHORT(key.win_vk))
         self.kbd_vsc_to_vk = vsc_to_vk
 
-        key_names = BinaryObject(alignment=8)  # TODO non-printable only
-        key_names_ext = BinaryObject(alignment=8)  # TODO non-printable only
+        key_names = BinaryObject(alignment=8)
+        key_names_ext = BinaryObject(alignment=8)
         vsc_to_vk_e0 = BinaryObject(alignment=4)
         vsc_to_vk_e1 = BinaryObject(alignment=4)
         for scan_code, key_code in self.layout.keymap.items():
-            if scan_code.prefix == 0:
-                if key_code.name != chr(key_code.win_vk & 0xFF):
-                    key_names.append(BYTE(scan_code.code))
-                    key_names.append(LPTR(self.architecture, WSTR(key_code.name)))
-            elif scan_code.prefix == 0xE0:
-                if key_code.name != chr(key_code.win_vk & 0xFF):
-                    key_names_ext.append(BYTE(scan_code.code))
-                    key_names_ext.append(LPTR(self.architecture, WSTR(key_code.name)))
+            if scan_code.prefix == 0xE0:
                 vsc_to_vk_e0.append(BYTE(scan_code.code))
                 vsc_to_vk_e0.append(USHORT(key_code.win_vk))
             elif scan_code.prefix == 0xE1:
                 vsc_to_vk_e1.append(BYTE(scan_code.code))
                 vsc_to_vk_e1.append(USHORT(key_code.win_vk))
+            if key_code.name:
+                if key_code.win_vk & 0x100:
+                    key_names_ext.append(BYTE(scan_code.code))
+                    key_names_ext.append(LPTR(self.architecture, WSTR(key_code.name)))
+                else:
+                    key_names.append(BYTE(scan_code.code))
+                    key_names.append(LPTR(self.architecture, WSTR(key_code.name)))
         key_names.append(BYTE(0))
         key_names.append(LPTR(self.architecture, None))
         self.kbd_key_names = key_names
@@ -156,73 +157,60 @@ class WinDll:
         self.kbd_vsc_to_vk_e1 = vsc_to_vk_e1
 
     def decompile_kbd_keymap(self):
-        names = {}
-        self.vk_names = {}
-        if self.kbd_key_names is not None:
-            key_names = BinaryObjectReader(self.kbd_key_names)
-            while True:
-                vsc = BYTE.read(key_names)
-                if vsc == 0:
-                    break
-                name_rva = LPTR.read(key_names, self.architecture) - self.base
-                name = self._extract_array(name_rva, 2)[0][:-2].decode('utf-16le')
-                names[ScanCode(vsc)] = name
+        self.layout.keymap = {}
 
-        if self.kbd_key_names_ext is not None:
-            key_names_ext = BinaryObjectReader(self.kbd_key_names_ext)
-            while True:
-                vsc = BYTE.read(key_names_ext)
-                if vsc == 0:
-                    break
-                name_rva = LPTR.read(key_names_ext, self.architecture) - self.base
-                name = self._extract_array(name_rva, 2)[0][:-2].decode('utf-16le')
-                names[ScanCode(vsc, 0xE0)] = name
+        names, names_ext = {}, {}
+        for k, n in ((self.kbd_key_names, names), (self.kbd_key_names_ext, names_ext)):
+            if k is not None:
+                reader = BinaryObjectReader(k)
+                while True:
+                    vsc = BYTE.read(reader)
+                    if vsc == 0:
+                        break
+                    name_rva = LPTR.read(reader, self.architecture) - self.base
+                    name = self._extract_array(name_rva, 2)[0][:-2].decode('utf-16le')
+                    if vsc in n and n[vsc] != name:
+                        warn("skipping duplicate name for vsc: 0x%X" % vsc)
+                        continue
+                    n[vsc] = name
+
+        def get_keycode(vsc, vk):
+            if vk & 0x100:
+                return KeyCode(vk, names_ext.get(vsc))
+            else:
+                return KeyCode(vk, names.get(vsc))
 
         vsc_to_vk = BinaryObjectReader(self.kbd_vsc_to_vk)
         vsc_to_vk_len = len(self.kbd_vsc_to_vk.data) // 2
         for vsc in range(vsc_to_vk_len):
             vk = USHORT.read(vsc_to_vk)
-            if vk == 0xFF or vk == 0:
+            if vk in (0, 0xFF):
                 continue
-            scancode = ScanCode(vsc)
-            name = names.get(scancode, chr(vk & 0xFF))
-            if scancode in self.layout.keymap:
-                warn("replacing duplicate scancode: 0x%X" % vsc)
-            if vk in self.vk_names:
-                warn("replacing duplicate vk name: (0x%X) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
-            self.vk_names[vk] = name
-            self.layout.keymap[scancode] = KeyCode(name, vk)
+            self.layout.keymap[ScanCode(vsc)] = get_keycode(vsc, vk)
 
         vsc_to_vk_e0 = BinaryObjectReader(self.kbd_vsc_to_vk_e0)
         while True:
             vsc = BYTE.read(vsc_to_vk_e0)
+            vk = USHORT.read(vsc_to_vk_e0)
             if vsc == 0:
                 break
-            vk = USHORT.read(vsc_to_vk_e0)
             scancode = ScanCode(vsc, 0xE0)
-            name = names.get(scancode, chr(vk & 0xFF))
             if scancode in self.layout.keymap:
-                warn("replacing duplicate scancode: 0xE0 0x%X" % vsc)
-            if vk in self.vk_names:
-                warn("replacing duplicate vk name: (0x%X) '%s' -> '%s'" % (vk, self.vk_names[vk], name))
-            self.vk_names[vk] = name
-            self.layout.keymap[scancode] = KeyCode(name, vk)
+                warn("duplicate scancode, skipping: 0xE0 0x%X" % vsc)
+                continue
+            self.layout.keymap[scancode] = get_keycode(vsc, vk)
 
-        # only Pause key, no name table
         vsc_to_vk_e1 = BinaryObjectReader(self.kbd_vsc_to_vk_e1)
         while True:
             vsc = BYTE.read(vsc_to_vk_e1)
+            vk = USHORT.read(vsc_to_vk_e1)
             if vsc == 0:
                 break
-            vk = USHORT.read(vsc_to_vk_e1)
             scancode = ScanCode(vsc, 0xE1)
-            if vsc == 0x1D:
-                name = "Pause"
-            else:
-                name = "0xE1%X" % vsc
             if scancode in self.layout.keymap:
-                warn("replacing duplicate scancode: 0xE1 0x%X" % vsc)
-            self.layout.keymap[scancode] = KeyCode(name, vk)
+                warn("duplicate scancode, skipping: 0xE1 0x%X" % vsc)
+                continue
+            self.layout.keymap[scancode] = get_keycode(vsc, vk)
         
     def compile_kbd_charmap(self):
         vk_to_bits = BinaryObject(alignment=4)
@@ -231,41 +219,24 @@ class WinDll:
             vk_to_bits.append(BYTE(shift))
         vk_to_bits.append(WORD(0))  # end of table
 
-        vk_translate = {
-            # drop KBDEXT for VK_DIVIDE and VK_CANCEL
-            0x16F: 0x6F, 0x103: 0x03,
-            # drop KBDSPECIAL for VK_MULTIPLY if present
-            # note: KBDSPECIAL is preserved for special keys without characters
-            0x26A: 0x6A,
-            # apply KBDNUMPAD | KBDSPECIAL translation to VK_NUMPAD* and VK_DECIMAL
-            0xC24: 0x67, 0xC26: 0x68, 0xC21: 0x69,
-            0xC25: 0x64, 0xC0C: 0x65, 0xC27: 0x66,
-            0xC23: 0x61, 0xC28: 0x62, 0xC22: 0x63,
-            0xC2D: 0x60, 0xC2E: 0x6E,
-        }
         max_mask = 0
         shift_states = []
         shift_state_map = {}
-        key_to_vk = {}
+        vk_attributes = {}
         for scancode, keycode in self.layout.keymap.items():
-            if keycode.name not in self.layout.charmap:
+            vk = KeyCode.translate_vk(keycode.win_vk)
+            if vk in (0, 0xFF) or len(self.layout.charmap.get(vk, {})) == 0:
                 continue
-            vk = keycode.win_vk
-            if vk == 0xFF or vk == 0:
-                warn("invalid vk, skipping: 0x%X" % vk)
+            elif vk > 0xFF:
+                warn("unknown special vk, skipping: 0x%X" % vk)
                 continue
-            if vk > 0xFF:
-                try:
-                    vk = vk_translate[vk]
-                except KeyError:
-                    warn("unknown special vk, skipping: 0x%X" % vk)
-                    continue
-            key_to_vk[keycode.name] = vk
-            for shiftstate, character in self.layout.charmap[keycode.name].items():
-                if not shiftstate in shift_state_map:
+            vk_attributes[vk] = keycode.attributes
+            for shiftstate, character in self.layout.charmap[vk].items():
+                shiftstate = dataclasses.replace(shiftstate, capslock=False)
+                if shiftstate not in shift_state_map:
                     shift_state_map[shiftstate] = len(shift_state_map)
                     shift_states.append(shiftstate)
-                    max_mask = max(max_mask, shiftstate.to_win_mask())
+                    max_mask = max(max_mask, shiftstate.to_bits())
 
         if len(shift_state_map) >= 15:
             raise RuntimeError("Too many shift states: %i >= 15" % len(shift_state_map))
@@ -276,31 +247,56 @@ class WinDll:
         modifiers.append(LPTR(self.architecture, vk_to_bits))
         modifiers.append(WORD(max_mask))
         for mask in range(max_mask + 1):
-            modifiers.append(BYTE(shift_state_map.get(ShiftState.from_win_mask(mask), 0xF)))
+            modifiers.append(BYTE(shift_state_map.get(ShiftState.from_bits(mask), 0xF)))
         self.kbd_modifiers = modifiers
 
         vk_to_wchars = BinaryObject(alignment=2)
-        for keycode, characters in self.layout.charmap.items():
-            if keycode not in key_to_vk:
-                warn("unmapped key, skipping: " + keycode)
-                continue
-            dead = None
-            vk_to_wchars.append(BYTE(key_to_vk[keycode]))
-            vk_to_wchars.append(BYTE(0))  # Attributes  # TODO (CAPLOK, SGCAPS, CAPLOKALTGR, KANALOC)
+        for vk, attributes in sorted(vk_attributes.items(), key=lambda e: KeyCode.untranslate_vk(e[0])):
+            characters = self.layout.charmap[vk]
+
+            secondary = {}
+            dead = {shiftstate: character.char
+                    for shiftstate, character in characters.items()
+                    if character.dead and not shiftstate.capslock}
+
+            if attributes.capslock_secondary:
+                if dead:
+                    warn("CAPSLOCK_SECONDARY is incompatible with dead keys, ignoring")
+                    attributes = dataclasses.replace(attributes, capslock_secondary=False)
+                else:
+                    secondary = {dataclasses.replace(shiftstate, capslock=False): character
+                                 for shiftstate, character in characters.items()
+                                 if shiftstate.capslock}
+                    # while unusual, deadkeys are valid in secondary capslock layer
+                    dead = {dataclasses.replace(shiftstate, capslock=False): character
+                            for shiftstate, character in characters.items()
+                            if character.dead and shiftstate.capslock}
+
+            # base row
+            vk_to_wchars.append(BYTE(vk))
+            vk_to_wchars.append(BYTE(attributes.to_bits()))  # Attributes
             for shiftstate in range(len(shift_states)):
                 character = characters.get(shift_states[shiftstate], Character("\uF000"))  # WCH_NONE
                 if character.dead:
-                    # TODO check entry exists?
-                    if dead is None:
-                        dead = {}
-                    dead[shiftstate] = character.char
                     character = Character("\uF001")  # WCH_DEAD
                 vk_to_wchars.append(WCHAR(character.char))
-            if dead is not None:
+
+            # secondary capslock row (SGCAPS)
+            if attributes.capslock_secondary:
+                vk_to_wchars.append(BYTE(vk))
+                vk_to_wchars.append(BYTE(0))
+                for shiftstate in range(len(shift_states)):
+                    character = secondary.get(shift_states[shiftstate], Character("\uF000"))  # WCH_NONE
+                    if character.dead:
+                        character = Character("\uF001")  # WCH_DEAD
+                    vk_to_wchars.append(WCHAR(character.char))
+
+            # dead keys row
+            if dead:
                 vk_to_wchars.append(BYTE(0xFF))
                 vk_to_wchars.append(BYTE(0))
                 for shiftstate in range(len(shift_states)):
-                    vk_to_wchars.append(WCHAR(dead.get(shiftstate, "\uF000")))
+                    vk_to_wchars.append(WCHAR(dead.get(shift_states[shiftstate], "\uF000")))
         vk_to_wchars.append(BYTE(0))  # end of table
         vk_to_wchars.append(BYTE(0))
         for shiftstate in range(len(shift_states)):
@@ -334,6 +330,9 @@ class WinDll:
         self.kbd_key_names_dead = key_names_dead
 
     def decompile_kbd_charmap(self):
+        self.layout.charmap = {}
+        self.layout.deadkeys = {}
+
         modifiers = BinaryObjectReader(self.kbd_modifiers)
 
         vk_to_bits_rva = LPTR.read(modifiers, self.architecture) - self.base
@@ -350,19 +349,9 @@ class WinDll:
         for mask in range(max_mask + 1):
             column = BYTE.read(modifiers)
             if column != 0xF:
-                shift_state_map[column] = ShiftState.from_win_mask(mask)  # TODO use bit_to_vk
+                shift_state_map[column] = ShiftState.from_bits(mask)
 
-        vk_translate = {
-            # add KBDEXT to VK_DIVIDE and VK_CANCEL
-            0x6F: 0x16F, 0x03: 0x103,
-            # add KBDSPECIAL to VK_MULTIPLY
-            0x6A: 0x26A,
-            # translate VK_NUMPAD* and VK_DECIMAL to KBDNUMPAD | KBDSPECIAL navigation keys
-            0x67: 0xC24, 0x68: 0xC26, 0x69: 0xC21,
-            0x64: 0xC25, 0x65: 0xC0C, 0x66: 0xC27,
-            0x61: 0xC23, 0x62: 0xC28, 0x63: 0xC22,
-            0x60: 0xC2D, 0x6E: 0xC2E,
-        }
+        attributes_update = {}
         vk_to_wchar_table = BinaryObjectReader(self.kbd_vk_to_wchar_table)
         while True:
             vk_to_wchar_ptr = LPTR.read(vk_to_wchar_table, self.architecture)
@@ -377,12 +366,11 @@ class WinDll:
             row = 0
             while row < vk_to_wchar_rows:
                 vk = BYTE.read(vk_to_wchar)
-                attributes = BYTE.read(vk_to_wchar)  # TODO (CAPLOK, SGCAPS, CAPLOKALTGR, KANALOC)
-                if vk not in self.vk_names and vk in vk_translate:
-                    keycode = self.vk_names.get(vk_translate[vk])
-                else:
-                    keycode = self.vk_names.get(vk)
-                dead = None
+                attributes = KeyAttributes.from_bits(BYTE.read(vk_to_wchar))
+                if vk == 0xFF:
+                    warn("unexpected dead key continuation line")
+                    continue
+                dead = {}
                 characters = {}
                 for col in range(vk_to_wchar_cols):
                     shiftstate = shift_state_map[col]
@@ -390,34 +378,53 @@ class WinDll:
                     if character.char == "\uF000":  # Null
                         pass
                     elif character.char == "\uF001":  # Dead
-                        if dead is None:
-                            dead = {}
-                        dead[col] = True
+                        if attributes.capslock_secondary:
+                            warn("ignoring dead key for key with SGCAPS: 0x%X" % vk)
+                        else:
+                            dead[col] = True
                     elif character.char == "\uF002":  # Ligature
                         warn("ligature detected, skipping")
                     else:
                         characters[shiftstate] = character
                 row += 1
-                if dead is not None:
+                if attributes.capslock_secondary:
+                    vk_to_wchar.read_or_warn(BYTE(vk))
+                    vk_to_wchar.read_or_warn(BYTE(0x00))
+                    for col in range(vk_to_wchar_cols):
+                        shiftstate = dataclasses.replace(shift_state_map[col], capslock=True)
+                        character = Character(WCHAR.read(vk_to_wchar))
+                        if character.char == "\uF000":  # Null
+                            pass
+                        elif character.char == "\uF001":  # Dead
+                            dead[col] = True
+                        elif character.char == "\uF002":  # Ligature
+                            warn("ligature detected, skipping")
+                        else:
+                            characters[shiftstate] = character
+                    row += 1
+                if dead:
                     vk_to_wchar.read_or_warn(BYTE(0xFF))
                     vk_to_wchar.read_or_warn(BYTE(0x00))
                     for col in range(vk_to_wchar_cols):
                         if not dead.get(col, False):
                             vk_to_wchar.read_or_warn(WCHAR("\uF000"))
                         else:
-                            shiftstate = shift_state_map[col]
+                            shiftstate = dataclasses.replace(shift_state_map[col], capslock=attributes.capslock_secondary)
                             character = Character(WCHAR.read(vk_to_wchar), True)
                             if character.char in "\uF000\uF001\uF002":
                                 warn("dead key maps to invalid character")
                             else:
                                 characters[shiftstate] = character
                     row += 1
-                if keycode is None:
-                    warn("vk 0x%X is mapped but not assigned to any vsc" % vk)
-                    keycode = characters.get(ShiftState(), chr(vk & 0xFF))
-                if keycode in self.layout.charmap:
-                    warn("replacing duplicate keycode: " + str(keycode))
-                self.layout.charmap[keycode] = characters
+                if vk in self.layout.charmap:
+                    warn("duplicate keycode, skipping: 0x%X" % vk)
+                    continue
+                self.layout.charmap[vk] = characters
+                attributes_update[vk] = attributes
+        self.layout.keymap = {
+            scancode: dataclasses.replace(keycode, attributes=attributes_update.get(keycode.win_vk, KeyAttributes()))
+            for scancode, keycode in self.layout.keymap.items()
+        }
 
         dead_key_names = {}
         if self.kbd_key_names_dead is not None:
@@ -444,23 +451,27 @@ class WinDll:
                 if accent not in self.layout.deadkeys:
                     self.layout.deadkeys[accent] = DeadKey(dead_key_names.get(accent, accent), {})
                 if character in self.layout.deadkeys[accent].charmap:
-                    warn("replacing duplicate dead key: '%s' + '%s'" % (accent, character))
+                    warn("skipping duplicate dead key: '%s' + '%s'" % (accent, character))
+                    continue
                 self.layout.deadkeys[accent].charmap[character] = composed
 
-    def decompile_fix_names(self):
-        rename = {}
-        for scancode, keycode in self.layout.keymap.items():
-            if keycode.name == chr(keycode.win_vk & 0xFF):
-                new_name = self.layout.charmap.get(keycode.name, {}).get(ShiftState())
-                if new_name is None:
-                    warn("unnamed vsc without vk character mapping: 0x%s" % scancode.to_string())
-                    rename[keycode.name] = "0x%X" % keycode.win_vk
-                else:
-                    rename[keycode.name] = new_name.char
-        self.layout.keymap = {scancode: KeyCode(rename.get(keycode.name, keycode.name), keycode.win_vk)
-                              for scancode, keycode in self.layout.keymap.items()}
-        self.layout.charmap = {rename.get(keycode, keycode): character
-                               for keycode, character in self.layout.charmap.items()}
+    # def decompile_fix_names(self):
+    #     rename = {}
+    #     for scancode, keycode in self.layout.keymap.items():
+    #         if keycode.name == chr(keycode.win_vk & 0xFF):
+    #             if ord('A') <= keycode.win_vk <= ord('Z'):
+    #                 new_name = Character(chr(keycode.win_vk))
+    #             else:
+    #                 new_name = self.layout.charmap.get(keycode.name, {}).get(ShiftState())
+    #             if new_name is None:
+    #                 warn("unnamed vsc without vk character mapping: 0x%s" % scancode.to_string())
+    #                 rename[keycode.name] = "0x%X" % keycode.win_vk
+    #             else:
+    #                 rename[keycode.name] = new_name.char
+    #     self.layout.keymap = {scancode: KeyCode(rename.get(keycode.name, keycode.name), keycode.win_vk)
+    #                           for scancode, keycode in self.layout.keymap.items()}
+    #     self.layout.charmap = {rename.get(keycode, keycode): character
+    #                            for keycode, character in self.layout.charmap.items()}
 
     def compile_tables(self):
         kbdtables = BinaryObject(alignment=self.architecture.long_pointer)
@@ -474,12 +485,12 @@ class WinDll:
         kbdtables.append(BYTE(len(self.kbd_vsc_to_vk.data) // 2))
         kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk_e0))
         kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk_e1))
-        kbdtables.append(MAKELONG(1, 1))  # TODO KLLF_ALTGR, KLLF_SHIFTLOCK, KLLF_LRM_RLM
+        kbdtables.append(MAKELONG(1, 1))  # fLocaleFlags  # TODO KLLF_ALTGR, KLLF_SHIFTLOCK, KLLF_LRM_RLM
         kbdtables.append(BYTE(0))
         kbdtables.append(BYTE(0))
-        kbdtables.append(LPTR(self.architecture, None))  # ligature  # TODO ?
-        kbdtables.append(DWORD(0))  # dwType, optional  # TODO ???
-        kbdtables.append(DWORD(0))  # dwSubType, optional  # TODO ???
+        kbdtables.append(LPTR(self.architecture, None))  # pLigature  # TODO ligatures
+        kbdtables.append(DWORD(0))  # dwType, if Win XP  # TODO dwType
+        kbdtables.append(DWORD(0))  # dwSubType, if Win XP  # TODO dwSubType
 
         self.kbdtables = kbdtables
 
@@ -523,7 +534,7 @@ class WinDll:
         vsc_to_vk_e1_rva = LPTR.read(kbdtables, self.architecture) - self.base
         self.kbd_vsc_to_vk_e1 = BinaryObject(self._extract_array(vsc_to_vk_e1_rva, 4)[0], alignment=8)
 
-        # TODO characteristics, types, ligatures, ...
+        # TODO fLocaleFlags, pLigature, dwType, dwSubType
 
     def compile_dir_export(self):
         func = BinaryObject(alignment=16)                           # -- PKBDTABLES KbdLayerDescriptor() --
@@ -578,7 +589,7 @@ class WinDll:
         reader.read_or_warn(DWORD(1))       # Number of Name Pointers
         addresses = DWORD.read(reader)      # Export Address Table RVA
 
-        # TODO this is temporary
+        # fallback name if resources directory is missing or fails to load
         self.layout.name = self._extract_array(dll_name_rva, 1)[0][:-1].decode('utf-8')
 
         func_rva = DWORD.read(BinaryObjectReader(BinaryObject(self._extract_fixed(addresses, 4), alignment=4)))
@@ -762,7 +773,8 @@ class WinDll:
                 for lang, (_, strings) in info_string.items():
                     cp, lang = MAKELONG.read(BinaryObjectReader(BinaryObject(bytes.fromhex(lang)[::-1], alignment=4)))
                     if cp == 1200:  # utf-16le
-                        print("using StringFileInfo for language 0x%X" % lang)
+                        if lang != 0:
+                            print("using StringFileInfo for language 0x%X" % lang)
                         self.layout.name = strings.get("FileDescription", strings.get("ProductName", ("\0", {})))[0][:-1]
                         if "FileVersion" in strings:
                             self.layout.name += " " + strings["FileVersion"][0][:-1]
@@ -905,7 +917,7 @@ class WinDll:
         coff.append(DWORD(0))                       # PointerToSymbolTable (deprecated)
         coff.append(DWORD(0))                       # NumberOfSymbol (deprecated)
         coff.append(WORD(len(opt.data)))            # SizeOfOptionalHeader
-        coff_characteristics = 0x210E if self.architecture.pointer == 4 else 0x2022
+        coff_characteristics = 0x2102 if self.architecture.pointer == 4 else 0x2022
         coff.append(WORD(coff_characteristics))     # Characteristics
 
         pe = BinaryObject(alignment=8)      # -- PE header --
@@ -973,16 +985,17 @@ class WinDll:
         DWORD.read(reader)                                  # PointerToSymbolTable (deprecated)
         DWORD.read(reader)                                  # NumberOfSymbol (deprecated)
         opt_end = reader.offset + 4 + WORD.read(reader)     # SizeOfOptionalHeader
-        coff_characteristics = 0x210E if self.architecture.pointer == 4 else 0x2022
-        reader.read_or_warn(WORD(coff_characteristics))     # Characteristics
-
+        coff_characteristics_target = 0x2102 if self.architecture.pointer == 4 else 0x2022
+        coff_characteristics = WORD.read(reader)            # Characteristics
+        if coff_characteristics & 0xFFF3 != coff_characteristics_target:
+            warn("read COFF Characteristics differ")
                                                                 # -- Optional Header --
         opt_magic = 0x10B if self.architecture.pointer == 4 else 0x20B
         reader.read_or_fail(WORD(opt_magic))                    # Magic
         reader.offset += 26 if self.architecture.pointer == 4 else 22
         self.base = DWORD_PTR(self.architecture).read(reader)   # ImageBase
-        if self.base != self.architecture.base:
-            warn("image uses base 0x%x instead of preferred 0x%x" % (self.base, self.architecture.base))
+        # if self.base != self.architecture.base:
+        #     warn("image uses base 0x%x instead of preferred 0x%x" % (self.base, self.architecture.base))
         opt_align_section = DWORD.read(reader)                  # SectionAlignment
         if opt_align_section != self.align_section:
             warn("image uses section alignment 0x%x instead of preferred 0x%x" % (opt_align_section, self.align_section))

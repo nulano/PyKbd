@@ -141,10 +141,12 @@ WSTR.read = _WSTR_read
 
 
 def WCHAR(char: str) -> BinaryObject:
-    # TODO check for UCS-2 range
     if len(char) != 1:
         raise ValueError("char must have length 1")
-    return BinaryObject(char.encode('utf-16le'))
+    data = char.encode('utf-16le')
+    if len(data) != 2:
+        raise ValueError("char does not fit in UCS-2")
+    return BinaryObject(data)
 
 
 WCHAR.read = lambda reader, align=True: reader.read_bytes(2, alignment=2 if align else None).decode('utf-16le')

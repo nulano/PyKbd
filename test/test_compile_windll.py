@@ -42,14 +42,14 @@ def len_round(base):
 def layout():
     return Layout("Dummy Test Layout", "PyKbd Test Layout", "PyKbd Test File", (1, 0), "kbdtst.dll",
                   {
-                      ScanCode(0x10): KeyCode('Q', ord('Q')),
-                      ScanCode(0x11): KeyCode('W', ord('W')),
-                      ScanCode(0x3B): KeyCode('F1', 0x70),
-                      ScanCode(0x47, 0xE0): KeyCode('Home', 0x24),
-                      ScanCode(0x1D, 0xE1): KeyCode('Pause', 0x13),
+                      ScanCode(0x10): KeyCode(ord('Q')),
+                      ScanCode(0x11): KeyCode(ord('W')),
+                      ScanCode(0x3B): KeyCode(0x70, 'F1'),
+                      ScanCode(0x47, 0xE0): KeyCode(0x124, 'Home'),
+                      ScanCode(0x1D, 0xE1): KeyCode(0x13, 'Pause'),
                   }, {
-                      'Q': {ShiftState(): Character('q'), ShiftState(shift=True): Character('Q')},
-                      'W': {ShiftState(): Character('w', dead=True)},
+                      ord('Q'): {ShiftState(): Character('q'), ShiftState(shift=True): Character('Q')},
+                      ord('W'): {ShiftState(): Character('w', dead=True)},
                   }, {
                       'w': DeadKey("Test W", {'w': Character('w', dead=True), 'q': Character('q')}),
                   })
@@ -242,7 +242,7 @@ def test_compile_header(windll: WinDll):
         ver_link_major, ver_link_minor, size_data, ver_major, ver_minor, size_image, size_header, checksum, \
         size_sec_data, rva_sec_data, size_sec_rsrc, rva_sec_rsrc, size_sec_reloc, rva_sec_reloc = match_object((
             # PE Signature, COFF header
-            b'PE\0\0\x4C\x01\x03\x00', DWORD(windll.timestamp).data, "8(0)", b'\xE0\x00\x0E\x21',
+            b'PE\0\0\x4C\x01\x03\x00', DWORD(windll.timestamp).data, "8(0)", b'\xE0\x00\x02\x21',
 
             # Optional header: standard fields
             b'\x0B\x01', "1(+)", "1(+)", "4(0)", "4(+)", "8(0)", b'\x00\x10\x00\x00' * 2,
@@ -339,11 +339,13 @@ def test_decompile(windll: WinDll):
 
 
 @pytest.mark.parametrize("name", [
+    "KBDUS_WIN10_AMD64",
     "KBDSL1_WINXP_X86",
     "KBDSL1_WIN7_X86",
     "KBDSL1_WIN7_AMD64",
     "KBDSL1_WIN7_WOW64",
-    "KBDUS_WIN10_AMD64",
+    "KBDCZ1_WIN10_AMD64",
+    "kbddvp64",
 ])
 def test_decompile_system(name):
     windll = WinDll()
@@ -356,11 +358,13 @@ def test_decompile_system(name):
 
 
 @pytest.mark.parametrize("name", [
+    "KBDUS_WIN10_AMD64",
     "KBDSL1_WINXP_X86",
     "KBDSL1_WIN7_X86",
     "KBDSL1_WIN7_AMD64",
     "KBDSL1_WIN7_WOW64",
-    "KBDUS_WIN10_AMD64",
+    "KBDCZ1_WIN10_AMD64",
+    "kbddvp64",
 ])
 def test_recompile_system(name):
     with open("../test_files/"+name+".dll", "rb") as f:
@@ -372,5 +376,5 @@ def test_recompile_system(name):
     windll = WinDll()
     windll.decompile(data)
     layout.name += " %d.%d" % layout.version
-    assert windll.layout == layout
+    assert windll.layout.to_json() == layout.to_json()
     assert windll.architecture == architecture
