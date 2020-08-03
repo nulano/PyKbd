@@ -51,7 +51,8 @@ ISO = Keyboard([
     (2, 0.5, Group([Row(keys=[0x3B, 0x3C, 0x3D, 0x3E])])),
     (6.5, 0.5, Group([Row(keys=[0x3F, 0x40, 0x41, 0x42])])),
     (11, 0.5, Group([Row(keys=[0x43, 0x44, 0x57, 0x58])])),
-    (15.5, 0.5, Group([Row(keys=[0x54, 0x46])])),
+    (15.5, 0.5, Group([Row(keys=[0x37])], 0xE0)),
+    (16.5, 0.5, Group([Row(keys=[0x46])])),
     (17.5, 0.5, Group([Row(keys=[0x1D])], 0xE1)),
 
     # Main

@@ -367,12 +367,17 @@ def test_decompile_system(name):
     "kbddvp64",
 ])
 def test_recompile_system(name):
+    # decompile system layout
     with open("../test_files/"+name+".dll", "rb") as f:
         windll = WinDll()
         windll.decompile(f.read())
         layout, architecture = windll.layout, windll.architecture
+
+    # recompile system layout
     windll = WinDll(layout, architecture)
     data = windll.compile()
+
+    # check recompiled layout decompiles equally
     windll = WinDll()
     windll.decompile(data)
     layout.name += " %d.%d" % layout.version

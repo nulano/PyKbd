@@ -137,7 +137,12 @@ class WinDll:
                 vsc_to_vk_e1.append(BYTE(scan_code.code))
                 vsc_to_vk_e1.append(USHORT(key_code.win_vk))
             if key_code.name:
-                if key_code.win_vk & 0x100:
+                # Pause (E1-1D-45)
+                if scan_code == ScanCode(0x1D, 0xE1):
+                    key_names.append(BYTE(0x45))
+                    key_names.append(LPTR(self.architecture, WSTR(key_code.name)))
+                # extended (E0-XX) or NumLock (45); (E0-45) is not in use
+                elif scan_code.prefix == 0xE0 or scan_code.code == 0x45:
                     key_names_ext.append(BYTE(scan_code.code))
                     key_names_ext.append(LPTR(self.architecture, WSTR(key_code.name)))
                 else:
@@ -174,11 +179,15 @@ class WinDll:
                         continue
                     n[vsc] = name
 
-        def get_keycode(vsc, vk):
-            if vk & 0x100:
-                return KeyCode(vk, names_ext.get(vsc))
+        def get_keycode(scancode, vk):
+            # Pause (E1-1D-45)
+            if scancode == ScanCode(0x1D, 0xE1):
+                return KeyCode(vk, names.get(0x45))
+            # extended (E0-XX) or NumLock (45); (E0-45) is not in use
+            elif scancode.prefix == 0xE0 or scancode.code == 0x45:
+                return KeyCode(vk, names_ext.get(scancode.code))
             else:
-                return KeyCode(vk, names.get(vsc))
+                return KeyCode(vk, names.get(scancode.code))
 
         vsc_to_vk = BinaryObjectReader(self.kbd_vsc_to_vk)
         vsc_to_vk_len = len(self.kbd_vsc_to_vk.data) // 2
@@ -186,7 +195,8 @@ class WinDll:
             vk = USHORT.read(vsc_to_vk)
             if vk in (0, 0xFF):
                 continue
-            self.layout.keymap[ScanCode(vsc)] = get_keycode(vsc, vk)
+            scancode = ScanCode(vsc)
+            self.layout.keymap[scancode] = get_keycode(scancode, vk)
 
         vsc_to_vk_e0 = BinaryObjectReader(self.kbd_vsc_to_vk_e0)
         while True:
@@ -198,7 +208,7 @@ class WinDll:
             if scancode in self.layout.keymap:
                 warn("duplicate scancode, skipping: 0xE0 0x%X" % vsc)
                 continue
-            self.layout.keymap[scancode] = get_keycode(vsc, vk)
+            self.layout.keymap[scancode] = get_keycode(scancode, vk)
 
         vsc_to_vk_e1 = BinaryObjectReader(self.kbd_vsc_to_vk_e1)
         while True:
@@ -210,7 +220,7 @@ class WinDll:
             if scancode in self.layout.keymap:
                 warn("duplicate scancode, skipping: 0xE1 0x%X" % vsc)
                 continue
-            self.layout.keymap[scancode] = get_keycode(vsc, vk)
+            self.layout.keymap[scancode] = get_keycode(scancode, vk)
         
     def compile_kbd_charmap(self):
         vk_to_bits = BinaryObject(alignment=4)
@@ -590,7 +600,9 @@ class WinDll:
         addresses = DWORD.read(reader)      # Export Address Table RVA
 
         # fallback name if resources directory is missing or fails to load
-        self.layout.name = self._extract_array(dll_name_rva, 1)[0][:-1].decode('utf-8')
+        dll_name = self._extract_array(dll_name_rva, 1)[0][:-1].decode('utf-8')
+        self.layout.name = dll_name
+        self.layout.dll_name = dll_name
 
         func_rva = DWORD.read(BinaryObjectReader(BinaryObject(self._extract_fixed(addresses, 4), alignment=4)))
         # function is typically shorter than 16 bytes
@@ -1010,8 +1022,8 @@ class WinDll:
             raise IOError("no Export directory in image")
         dir_export_rva = DWORD.read(reader)                     # Export - Rva
         dir_export_len = DWORD.read(reader)                     # Export - Size
-        if dir_export_rva == 0:
-            raise IOError("no Export directory in image")
+        # if dir_export_rva == 0:
+            # raise IOError("no Export directory in image")
         if opt_dir_len < 3:
             dir_resource_rva = 0                                # Resource - Rva
             dir_resource_len = 0                                # Resource - Size
@@ -1102,7 +1114,7 @@ def _RSRC_TABLE(entries: _RSRC_TABLE_ENTRIES):
         name = BinaryObject(WORD(len(key)).data, alignment=2)
         name.append(WSTR(key))
         strings.append(name)
-        table.append(_RSRC_OFFSET(name))
+        table.append(_RSRC_OFFSET(name, 0x80000000))
         xor = 0
         if isinstance(value, tuple):
             value = _RSRC_ENTRY(*value)
@@ -1138,7 +1150,7 @@ def _RSRC_TABLE_read(reader: BinaryObjectReader) -> _RSRC_TABLE_ENTRIES:
     entries = {}
 
     for _ in range(name_entries_len):
-        name_off = DWORD.read(reader)
+        name_off = DWORD.read(reader) & 0x7FFFFFFF
         name_reader = BinaryObjectReader(reader.target, name_off)
         name_len = WORD.read(name_reader)
         name = name_reader.read_bytes(2 * name_len).decode('utf-16le')
