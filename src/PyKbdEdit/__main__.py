@@ -19,4 +19,11 @@ import sys
 
 from .launcher import main
 
+
+def excepthook(cls, exception, traceback):
+    sys.__excepthook__(cls, exception, traceback)
+    sys.stderr.flush()
+
+
+sys.excepthook = excepthook
 sys.exit(main(sys.argv))
