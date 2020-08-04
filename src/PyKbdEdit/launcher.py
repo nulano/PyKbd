@@ -45,7 +45,7 @@ class Launcher(QMainWindow):
             copyright=f"Copyright (c) {datetime.now().year} {os.environ.get('USER', '')}",
             version=(1, 0),
             dll_name=f"kbd_{''.join(random.choice(string.ascii_lowercase) for _ in range(4))}.dll",
-        )).action_metadata()
+        )).actionMetadata_()
 
     def action_open(self):
         filename = QFileDialog.getOpenFileName(
@@ -68,7 +68,7 @@ class Launcher(QMainWindow):
             windll = WinDll()
             with open(filename, "rb") as f:
                 windll.decompile(f.read())
-            open_editor(windll.layout).action_metadata()
+            open_editor(windll.layout).actionMetadata_()
 
     def action_about(self):
         dialog = load_layout(QDialog(self), f"{__package__}.about")

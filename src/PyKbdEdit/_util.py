@@ -17,6 +17,7 @@
 
 import inspect
 import string
+from collections import defaultdict
 from importlib.resources import open_text
 
 from PyQt5 import uic
@@ -30,7 +31,15 @@ def load_layout(wnd: QWidget, name: str):
     """
     package, _, name = name.rpartition('.')
     with open_text(package, name + ".ui") as layout:
-        uic.loadUi(layout, wnd)
+        return uic.loadUi(layout, wnd)
+
+
+def connected(*args, **kwargs):
+    def wrap(func):
+        func.connected = (args, kwargs)
+        return func
+
+    return wrap
 
 
 def connect(wnd: QWidget):
@@ -42,6 +51,25 @@ def connect(wnd: QWidget):
     The method may optionally take a ``checked`` parameter (name required).
     """
     for name, func in wnd.__class__.__dict__.items():
+        if hasattr(func, "connected"):
+            func = func.__get__(wnd, wnd.__class__)
+            params = inspect.signature(func).parameters
+
+            target, _, action = name.partition("_")
+            target = getattr(wnd, target)
+            if action == "":
+                if isinstance(target, QAction):
+                    action = "triggered"
+                    if "checked" not in params:
+                        func = lambda checked, f=func: f()
+                elif isinstance(target, QPushButton):
+                    action = "clicked"
+                    if "checked" not in params:
+                        func = lambda checked, f=func: f()
+            action = getattr(target, action)
+            action.connect(func)
+            continue
+
         name2 = name[0].lower() + string.capwords(name, sep="_").replace("_", "")[1:]
         target = getattr(wnd, name2, None)
         if name[:7] == "action_":

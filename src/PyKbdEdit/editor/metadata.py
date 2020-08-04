@@ -79,3 +79,4 @@ class MetadataWindow(QDialog):
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             ) == QMessageBox.Yes
+        return True

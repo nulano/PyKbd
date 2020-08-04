@@ -102,16 +102,24 @@ def _flags(bits: Optional[Collection[str]] = None):
     return partial(_impl, bits)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class ScanCode:
+    prefix: int
     code: int
-    prefix: int = 0
+
+    def __init__(self, code, prefix=0):
+        if code < 0 or code > 0xFF:
+            raise ValueError("code must be unsigned byte")
+        if prefix not in (0, 0xE0, 0xE1):
+            raise ValueError("prefix must be one of 0, 0xE0, 0xE1")
+        object.__setattr__(self, "prefix", prefix)
+        object.__setattr__(self, "code", code)
 
     def to_string(self):
         if self.prefix != 0:
-            return "%X,%X" % (self.prefix, self.code)
+            return "%02X,%02X" % (self.prefix, self.code)
         else:
-            return "%X" % self.code
+            return "%02X" % self.code
 
     @classmethod
     def from_string(cls, string):
