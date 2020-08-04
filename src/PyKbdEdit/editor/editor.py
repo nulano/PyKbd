@@ -17,13 +17,60 @@
 
 from typing import Union
 
-from PyQt5.QtWidgets import QMainWindow, QLabel
+from PyQt5.QtWidgets import QFileDialog, QMainWindow
 
 from PyKbd.layout import Layout
+
+from .._util import connect, load_layout
+from . import _version
+from .metadata import MetadataWindow
+from .keyboardwidget import KeyboardWidget
+
+__version__ = _version
 
 
 class EditorWindow(QMainWindow):
     def __init__(self, layout: Union[str, Layout]):
         super(EditorWindow, self).__init__()
 
-        self.setCentralWidget(QLabel(str(layout)))
+        if isinstance(layout, str):
+            with open(layout, encoding="utf-8") as f:
+                data = f.read()
+            self.filename = layout
+            layout = Layout.from_json(data)
+        else:
+            self.filename = None
+
+        assert isinstance(layout, Layout)
+        self.kbd_layout = layout
+
+        load_layout(self, __name__)
+        connect(self)
+
+        self.load_metadata()
+
+    def closeEvent(self, ev):
+        print("closing...")
+        ev.accept()
+
+    def load_metadata(self):
+        self.setWindowTitle(self.kbd_layout.name)
+
+    def action_save(self):
+        if not self.filename:
+            self.action_save_as("Save Layout...")
+        else:
+            print("saved as", self.filename)
+
+    def action_save_as(self, caption="Save Layout As..."):
+        filename = QFileDialog.getSaveFileName(
+            self, caption, self.filename, "Layout Files (*.json);;All Files (*.*)"
+        )[0]
+        if filename:
+            self.filename = filename
+            self.action_save()
+
+    def action_metadata(self):
+        dlg = MetadataWindow(self, self.kbd_layout)
+        dlg.accepted.connect(self.load_metadata)
+        dlg.open()

@@ -15,15 +15,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
+import random
 import string
-from importlib.resources import open_text
+from datetime import datetime
 
-from PyQt5 import uic
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QDialog, QFileDialog
+from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow
 
 from . import _version
+from ._util import connect, load_layout
 from .editor import open_editor
-
 
 __version__ = _version
 
@@ -32,51 +33,52 @@ class Launcher(QMainWindow):
     def __init__(self):
         super(Launcher, self).__init__()
 
-        with open_text(__package__, __name__.rpartition('.')[2]+".ui") as layout:
-            uic.loadUi(layout, self)
+        load_layout(self, __name__)
+        connect(self)
 
-        for name, func in Launcher.__dict__.items():
-            if name[:7] == "action_":
-                action = getattr(
-                    self, "action" + string.capwords(name[7:], sep="_").replace("_", "")
-                )
-                assert isinstance(action, QAction)
-                action.triggered.connect(func.__get__(self, Launcher))
-
-    def action_new(self, checked=False):
+    @staticmethod
+    def action_new():
         from PyKbd.layout import Layout
-        open_editor(Layout("Unnamed Layout"))
+        open_editor(Layout(
+            name="Unnamed Layout",
+            author=os.environ.get("USER", ""),
+            copyright=f"Copyright (c) {datetime.now().year} {os.environ.get('USER', '')}",
+            version=(1, 0),
+            dll_name=f"kbd_{''.join(random.choice(string.ascii_lowercase) for _ in range(4))}.dll",
+        )).action_metadata()
 
-    def action_open(self, checked=False):
+    def action_open(self):
         filename = QFileDialog.getOpenFileName(
-            self, "Open layout file", filter="Layout files (*.json);;All files (*.*)"
+            self, "Open layout file", filter="Layout Files (*.json);;All Files (*.*)"
         )[0]
         if filename:
             open_editor(filename)
 
-    def action_decompile(self, checked=False):
+    def action_decompile(self):
         # TODO X11 keyboard support
-        import os
         filename = QFileDialog.getOpenFileName(
             self,
             "Open compiled layout file",
             directory=os.path.join(os.environ["WINDIR"], "System32", "KBDUS.DLL"),
-            filter="Windows keyboard layout (*.dll);;All files (*.*)",
+            filter="Windows Keyboard Layouts (*.dll);;All Files (*.*)",
         )[0]
         if filename:
-            open_editor(filename)
+            from PyKbd.compile_windll import WinDll
 
-    def action_about(self, checked=False):
-        with open_text(__package__, "about.ui") as layout:
-            dialog = uic.loadUi(layout, QDialog(self))
-            assert isinstance(dialog, QDialog)
-            dialog.exec_()
+            windll = WinDll()
+            with open(filename, "rb") as f:
+                windll.decompile(f.read())
+            open_editor(windll.layout).action_metadata()
 
-    def action_license(self, checked=False):
-        with open_text(__package__, "license.ui") as layout:
-            dialog = uic.loadUi(layout, QDialog(self))
-            assert isinstance(dialog, QDialog)
-            dialog.exec_()
+    def action_about(self):
+        dialog = load_layout(QDialog(self), f"{__package__}.about")
+        assert isinstance(dialog, QDialog)
+        dialog.open()
+
+    def action_license(self):
+        dialog = load_layout(QDialog(self), f"{__package__}.license")
+        assert isinstance(dialog, QDialog)
+        dialog.open()
 
 
 def main(argv):
