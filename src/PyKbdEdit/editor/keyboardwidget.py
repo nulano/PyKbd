@@ -16,18 +16,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Callable, Any
 
+from PyQt5 import QtCore
 from PyQt5.QtCore import QSize
-from PyQt5.QtWidgets import QPushButton, QWidget
+from PyQt5.QtWidgets import QPushButton, QWidget, QLabel
 
 from PyKbd.layout import ScanCode
 from PyKbd.visualizer import Keyboard
 
 
 class KeyboardWidget(QWidget):
-    clicked = lambda self, scancode: print(scancode)
-    style = lambda self, scancode: (scancode.to_string(), "#faa", "#6aa", False)
+    clicked: Callable[[ScanCode], Any]
+    """Button click callback."""
+    style: Callable[[ScanCode], Tuple[str, str, str, bool, bool, str]]
+    """Button style. Returns (text, color, borderColor, selected, disabled, extra)"""
     keySizeHint = 100
     keySizeHintMin = 20
 
@@ -35,10 +38,15 @@ class KeyboardWidget(QWidget):
     _scale = 1.0
     _padding = (0.0, 0.0)
     _bounds = (0.0, 0.0, 0.0, 0.0)
-    _keys: Dict[ScanCode, List[Tuple[Tuple[float, float, float, float], bool, QPushButton]]] = defaultdict(list)
+    _keys: Dict[ScanCode, List[Tuple[Tuple[float, float, float, float], bool, QPushButton]]]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._keys = defaultdict(list)
+
+        # placeholder callbacks
+        self.clicked = lambda scancode: print(scancode)
+        self.style = lambda scancode: (scancode.to_string(), "#faa", "#6aa", False, False, "")
 
         # initialize with blank layout
         self.keyboard = None
@@ -61,7 +69,6 @@ class KeyboardWidget(QWidget):
             btn = QPushButton("?", self)
             btn.setFlat(True)
             btn.setMinimumSize(0, 0)
-            btn.show()
             btn.clicked.connect(lambda c, s=scancode: self.clicked(s))
             self._keys[scancode].append((bounds, special, btn))
         self.updateGeometry()
@@ -74,9 +81,10 @@ class KeyboardWidget(QWidget):
         ox, oy, _, _ = self._bounds
         fnt = None
         for bounds, special, key in self._keys[scancode]:
-            text, color, borderColor, selected = self.style(scancode)
+            text, color, borderColor, selected, disabled, extra = self.style(scancode)
             text_changed = text != key.text()
             key.setText(text)
+            key.setEnabled(not disabled)
             if selected:
                 style = f"""
 QPushButton {{
@@ -93,8 +101,11 @@ QPushButton {{
 QPushButton:hover, QPushButton:focus {{
   border: 3px dotted {borderColor};
 }}
+QPushButton:disabled {{
+  color: #222;
+}}
 """
-            key.setStyleSheet(style)
+            key.setStyleSheet(style + extra)
             if geometry or text_changed:
                 x1, y1, x2, y2 = bounds
                 x, y, w, h = x1 - ox, y1 - oy, x2 - x1, y2 - y1

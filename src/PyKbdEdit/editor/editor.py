@@ -51,7 +51,7 @@ class _ComboVscModel(QAbstractListModel):
     RoleNameComputed = Qt.UserRole + 3
 
     keys: list
-    inserting: Union[bool, ScanCode]
+    inserting: Union[bool, ScanCode] = None
 
     def __init__(self, parent, layout: Layout):
         super().__init__(parent)
@@ -224,6 +224,7 @@ class EditorWindow(QMainWindow):
 
         self.setup_base()
         self.setup_keymap()
+        self.setup_charmap()
 
     # ==================== BASE ====================
 
@@ -274,7 +275,9 @@ class EditorWindow(QMainWindow):
         dlg.open()
 
     def actionKeyboardGroup_(self, action):
-        self.kbdKeymap.keyboard = action.data()
+        keyboard = action.data()
+        self.kbdKeymap.keyboard = keyboard
+        self.kbdCharmap.keyboard = keyboard
 
     # ==================== KEYMAP ====================
 
@@ -316,7 +319,7 @@ class EditorWindow(QMainWindow):
                     name = win_vk.code_to_vk[keycode.win_vk].name
                     color, border = "#f8f", "#a6a"  # magenta
         selected = self.comboVsc.currentData(_ComboVscModel.RoleVsc) == scancode
-        return name, color, border, selected
+        return name, color, border, selected, False, ""
 
     def kbdKeymap_clicked(self, scancode):
         if scancode not in self.kbd_layout.keymap:
@@ -385,3 +388,38 @@ class EditorWindow(QMainWindow):
     @connected()
     def btnVscRemove_(self):
         self.comboVsc.removeItem(self.comboVsc.currentIndex())
+
+    # ==================== CHARMAP ====================
+
+    kbdCharmap: KeyboardWidget
+    comboVk: QComboBox
+    btnVkRemove: QPushButton
+    previous_vk = None
+
+    def setup_charmap(self):
+        self.kbdCharmap.style = self.kbdCharmap_style
+        # self.kbdCharmap.clicked = self.kbdCharmap_clicked
+
+    def kbdCharmap_style(self, scancode):
+        disabled, extra = False, ""
+        keycode = self.kbd_layout.keymap.get(scancode, None)
+        vk = keycode and win_vk.code_to_vk.get(win_vk.translate(keycode.win_vk & ~win_vk.KBDEXT), win_vk.VK__none_)
+        name = "" if vk.reserved else vk.name
+        if not vk.mappable:
+            color, border, disabled = "#aaa", "#888", True  # gray
+        else:
+            charcode = self.kbd_layout.charmap.get(vk.code, None)
+            if not charcode:
+                color, border = "#f88", "#a66"  # red
+            else:
+                char = charcode.get(ShiftState())
+                if char:
+                    name, color, border = char.char, "#8f8", "#6a6"  # green
+                    # if ord(char.char) < 0x20:
+                    #     from curses.ascii import controlnames
+                    #     name = controlnames[ord(char.char)]
+                    #     extra = "color: #faa;"
+                else:
+                    color, border = "#ff8", "#aa6"  # yellow
+        # selected = self.comboVk.currentData(_ComboVscModel.RoleVsc) == scancode
+        return name, color, border, False, disabled, extra

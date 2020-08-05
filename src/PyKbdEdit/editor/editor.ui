@@ -18,97 +18,93 @@
     <item>
      <widget class="QTabWidget" name="tabWidget">
       <property name="currentIndex">
-       <number>0</number>
+       <number>1</number>
       </property>
       <widget class="QWidget" name="tabKeymap">
        <attribute name="title">
         <string>Keymap</string>
        </attribute>
-       <layout class="QVBoxLayout" name="verticalLayout_3">
+       <layout class="QVBoxLayout" name="verticalLayout_2" stretch="1,0,0,0">
         <item>
-         <layout class="QVBoxLayout" name="verticalLayout_2">
+         <widget class="KeyboardWidget" name="kbdKeymap" native="true"/>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout" stretch="0,1,0">
           <item>
-           <widget class="KeyboardWidget" name="kbdKeymap" native="true"/>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="horizontalLayout" stretch="0,1,0">
-            <item>
-             <widget class="QLabel" name="label">
-              <property name="text">
-               <string>Scan Code</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QComboBox" name="comboVsc">
-              <property name="editable">
-               <bool>true</bool>
-              </property>
-              <property name="maxVisibleItems">
-               <number>50</number>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnVscRemove">
-              <property name="text">
-               <string>Remove</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <widget class="QGroupBox" name="groupVsc">
-            <property name="title">
-             <string>Mapped Key</string>
+           <widget class="QLabel" name="label">
+            <property name="text">
+             <string>Scan Code</string>
             </property>
-            <layout class="QFormLayout" name="formLayout">
-             <item row="0" column="0">
-              <widget class="QLabel" name="label_2">
-               <property name="text">
-                <string>Key Name</string>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="comboVsc">
+            <property name="editable">
+             <bool>true</bool>
+            </property>
+            <property name="maxVisibleItems">
+             <number>50</number>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnVscRemove">
+            <property name="text">
+             <string>Remove</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="groupVsc">
+          <property name="title">
+           <string>Scan Code Mapping</string>
+          </property>
+          <layout class="QFormLayout" name="formLayout">
+           <item row="0" column="0">
+            <widget class="QLabel" name="label_2">
+             <property name="text">
+              <string>Physical Key Name</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QLineEdit" name="editVscName"/>
+           </item>
+           <item row="1" column="1">
+            <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="1,0">
+             <item>
+              <widget class="QComboBox" name="comboVscVk">
+               <property name="maxVisibleItems">
+                <number>50</number>
                </property>
               </widget>
              </item>
-             <item row="0" column="1">
-              <widget class="QLineEdit" name="editVscName"/>
-             </item>
-             <item row="1" column="1">
-              <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="1,0">
-               <item>
-                <widget class="QComboBox" name="comboVscVk">
-                 <property name="maxVisibleItems">
-                  <number>50</number>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QPushButton" name="btnVscVkSwap">
-                 <property name="enabled">
-                  <bool>false</bool>
-                 </property>
-                 <property name="toolTip">
-                  <string>Replace all occurences of this VK</string>
-                 </property>
-                 <property name="text">
-                  <string>Swap...</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </item>
-             <item row="1" column="0">
-              <widget class="QLabel" name="label_3">
+             <item>
+              <widget class="QPushButton" name="btnVscVkSwap">
+               <property name="enabled">
+                <bool>false</bool>
+               </property>
+               <property name="toolTip">
+                <string>Replace all occurences of this VK</string>
+               </property>
                <property name="text">
-                <string>Virtual Key</string>
+                <string>Swap...</string>
                </property>
               </widget>
              </item>
             </layout>
-           </widget>
-          </item>
-         </layout>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="label_3">
+             <property name="text">
+              <string>Virtual Key</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </item>
        </layout>
       </widget>
@@ -116,6 +112,53 @@
        <attribute name="title">
         <string>Character Map</string>
        </attribute>
+       <layout class="QVBoxLayout" name="verticalLayout_4" stretch="1,0,0,0">
+        <item>
+         <widget class="KeyboardWidget" name="kbdCharmap" native="true"/>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_3" stretch="0,1,0">
+          <item>
+           <widget class="QLabel" name="label_4">
+            <property name="text">
+             <string>Virtual Key</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="comboVk">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <property name="editable">
+             <bool>true</bool>
+            </property>
+            <property name="maxVisibleItems">
+             <number>50</number>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnVkRemove">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <property name="text">
+             <string>Remove</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="groupVk">
+          <property name="title">
+           <string>Mapped Scan Codes</string>
+          </property>
+          <layout class="QFormLayout" name="formLayout_2"/>
+         </widget>
+        </item>
+       </layout>
       </widget>
       <widget class="QWidget" name="tabDeadkeys">
        <attribute name="title">
