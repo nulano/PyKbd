@@ -42,10 +42,11 @@ class Group:
 
 @dataclass(frozen=True)
 class Keyboard:
+    name: str
     groups: List[Tuple[float, float, Group]]
 
 
-ISO = Keyboard([
+_function = [
     # Function Keys
     (0, 0.5, Group([Row(1.50, 0x01)])),
     (2, 0.5, Group([Row(keys=[0x3B, 0x3C, 0x3D, 0x3E])])),
@@ -54,14 +55,30 @@ ISO = Keyboard([
     (15.5, 0.5, Group([Row(keys=[0x37])], 0xE0)),
     (16.5, 0.5, Group([Row(keys=[0x46])])),
     (17.5, 0.5, Group([Row(keys=[0x1D])], 0xE1)),
+]
 
+_main_ansi = [
+    # Main
+    (0, 2, Group([
+        Row(0.00, None, [0x29, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D], 0x0E, 2.00),
+        Row(1.50, 0x0F,       [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B], 0x2B, 1.50),
+        Row(1.75, 0x3A,       [0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28],       0x1C, 2.25),
+        Row(2.25, 0x2A,       [0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35],             0x36, 2.75),
+    ], special=False)),
+]
+
+_main_iso = [
     # Main
     (0, 2, Group([
         Row(0.00, None, [0x29, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D], 0x0E, 2.00),
         Row(1.50, 0x0F,       [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B], 0x1C, 1.50),
         Row(1.75, 0x3A,       [0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2B], 0x1C, 1.25),
-        Row(1.25, 0x2A,       [0x56, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35],       0x36, 2.75),
+        Row(1.25, 0x2A, [0x56, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35],             0x36, 2.75),
     ], special=False)),
+]
+
+_bottom = [
+    # bottom row for 104/105 and 87/88 keyboards
     (00.00, 6, Group([Row(1.50, 0x1D)])),
     (01.50, 6, Group([Row(1.25, 0x5B)], 0xE0)),
     (02.75, 6, Group([Row(1.25, 0x38)])),
@@ -70,7 +87,20 @@ ISO = Keyboard([
     (11.25, 6, Group([Row(1.25, 0x5C)], 0xE0)),
     (12.50, 6, Group([Row(1.25, 0x5D)], 0xE0)),
     (13.75, 6, Group([Row(1.25, 0x1D)], 0xE0)),
+]
 
+_bottom_101 = [
+    # bottom row for 101/102 (IBM) keyboards
+    (00.00, 6, Group([Row(1.50, 0x1D)])),
+    # (blank space of width 1 key)
+    (02.75, 6, Group([Row(1.25, 0x38)])),
+    (04.00, 6, Group([Row(7.00, 0x39)])),
+    (11.00, 6, Group([Row(1.50, 0x38)], 0xE0)),
+    # (blank space of width 1 key)
+    (13.50, 6, Group([Row(1.50, 0x1D)], 0xE0)),
+]
+
+_navigation = [
     # Navigation
     (15.5, 2, Group([
         Row(keys=[0x52, 0x47, 0x49]),
@@ -78,7 +108,9 @@ ISO = Keyboard([
     ], 0xE0)),
     (16.5, 5, Group([Row(keys=[0x48])], 0xE0)),
     (15.5, 6, Group([Row(keys=[0x4B, 0x50, 0x4D])], 0xE0)),
+]
 
+_numpad = [
     # Numpad
     (19, 2, Group([Row(keys=[0x45])])),
     (20, 2, Group([Row(keys=[0x35])], 0xE0, special=False)),
@@ -91,7 +123,61 @@ ISO = Keyboard([
     ], special=False)),
     (22, 3, Group([Row(keys=[0x4E])], height=2, special=False)),
     (22, 5, Group([Row(keys=[0x1C])], 0xE0, height=2)),
+]
+
+# ANSI keyboards
+
+ANSI_104 = Keyboard("ANSI 104-key", [
+    *_function,
+    *_main_ansi,
+    *_bottom,
+    *_navigation,
+    *_numpad,
 ])
+ANSI_101 = Keyboard("ANSI 101-key", [
+    *_function,
+    *_main_ansi,
+    *_bottom_101,
+    *_navigation,
+])
+ANSI_87 = Keyboard("ANSI 87-key", [
+    *_function,
+    *_main_ansi,
+    *_bottom,
+    *_navigation,
+])
+
+# ISO keyboards
+
+ISO_105 = Keyboard("ISO 105-key", [
+    *_function,
+    *_main_iso,
+    *_bottom,
+    *_navigation,
+    *_numpad,
+])
+ISO_102 = Keyboard("ISO 102-key", [
+    *_function,
+    *_main_iso,
+    *_bottom_101,
+    *_navigation,
+    *_numpad,
+])
+ISO_88 = Keyboard("ISO 88-key", [
+    *_function,
+    *_main_iso,
+    *_bottom,
+    *_navigation,
+])
+
+
+ANSI = ANSI_104
+ISO = ISO_105
+
+all = [
+    ANSI_104, ANSI_101, ANSI_87,
+    ISO_105, ISO_102, ISO_88,
+]
 
 
 def draw_text(draw, x, y, font, text, color=(0, 0, 0)):
@@ -129,10 +215,15 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
 
 def draw_keyboard(layout: Layout, keyboard: Keyboard):
     key_size = 100
-    im = Image.new("RGB", (23 * key_size + 1, int(7 * key_size) + 1), (255, 255, 255))
+    mx = 0
+    for ox, oy, group in keyboard.groups:
+        for row in group.rows:
+            mx = max(mx, ox + row.left_width + len(row.keys) + row.right_width)
+    wd = int(mx * key_size + 1)
+    im = Image.new("RGB", (wd, int(7 * key_size) + 1), (255, 255, 255))
     draw = ImageDraw.Draw(im, "RGB")
     font = ImageFont.truetype('segoeui', 24)
-    draw_text(draw, 23 / 2 * key_size, 0.25 * key_size, font, layout.name + " by " + layout.author)
+    draw_text(draw, wd // 2, 0.25 * key_size, font, layout.name + " by " + layout.author)
     for ox, oy, group in keyboard.groups:
         for y, row in enumerate(group.rows):
             if row.left is not None:
