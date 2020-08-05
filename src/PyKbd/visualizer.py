@@ -14,13 +14,14 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from dataclasses import dataclass
 from math import sqrt
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
-from PyKbd.layout import Layout, ShiftState, ScanCode, KeyCode
+from PyKbd.layout import KeyCode, Layout, ScanCode, ShiftState
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class Row:
 class Group:
     rows: List[Row]
     prefix: int = 0
+    width: float = 1
     height: float = 1
     special: bool = True
 
@@ -44,6 +46,44 @@ class Group:
 class Keyboard:
     name: str
     groups: List[Tuple[float, float, Group]]
+
+    def bounds(self):
+        x1, y1, x2, y2 = 100, 100, -100, -100
+        for ox, oy, group in self.groups:
+            y1 = min(y1, oy)
+            y2 = max(y2, oy + group.height)
+            for row in group.rows:
+                x1 = min(x1, ox)
+                x2 = max(x2, ox + row.left_width + len(row.keys) * group.width + row.right_width)
+        if x1 >= x2 or y1 >= y2:
+            return 0, 0, 0, 0
+        return x1, y1, x2, y2
+
+    def __iter__(self):
+        for ox, oy, group in self.groups:
+            for row in group.rows:
+                x = ox
+                if row.left is not None:
+                    yield (
+                        (x, oy, x + row.left_width, oy + group.height),
+                        ScanCode(row.left, group.prefix),
+                        True,
+                    )
+                x += row.left_width
+                for key in row.keys:
+                    yield (
+                        (x, oy, x + group.width, oy + group.height),
+                        ScanCode(key, group.prefix),
+                        group.special,
+                    )
+                    x += group.width
+                if row.right is not None:
+                    yield (
+                        (x, oy, x + row.right_width, oy + group.height),
+                        ScanCode(row.right, group.prefix),
+                        True,
+                    )
+                oy += group.height
 
 
 _function = [
@@ -61,10 +101,12 @@ _main_ansi = [
     # Main
     (0, 2, Group([
         Row(0.00, None, [0x29, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D], 0x0E, 2.00),
-        Row(1.50, 0x0F,       [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B], 0x2B, 1.50),
+        Row(1.50, 0x0F,       [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B]            ),
         Row(1.75, 0x3A,       [0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28],       0x1C, 2.25),
         Row(2.25, 0x2A,       [0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35],             0x36, 2.75),
     ], special=False)),
+    # VK_OEM_5 ('\|' on US keyboard) is extra wide, but not special
+    (13.5, 3, Group([Row(0.00, None, [0x2B])], width=1.50, special=False)),
 ]
 
 _main_iso = [
@@ -146,6 +188,10 @@ ANSI_87 = Keyboard("ANSI 87-key", [
     *_bottom,
     *_navigation,
 ])
+ANSI_61 = Keyboard("ANSI 61-key", [
+    *_main_ansi,
+    *_bottom,
+])
 
 # ISO keyboards
 
@@ -169,14 +215,21 @@ ISO_88 = Keyboard("ISO 88-key", [
     *_bottom,
     *_navigation,
 ])
+ISO_62 = Keyboard("ISO 62-key", [
+    *_main_iso,
+    *_bottom,
+])
+
+NUMPAD = Keyboard("Numpad", _numpad)
 
 
 ANSI = ANSI_104
 ISO = ISO_105
 
 all = [
-    ANSI_104, ANSI_101, ANSI_87,
-    ISO_105, ISO_102, ISO_88,
+    ANSI_104, ANSI_101, ANSI_87, ANSI_61,
+    ISO_105, ISO_102, ISO_88, ISO_62,
+    NUMPAD,
 ]
 
 
@@ -215,23 +268,28 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
 
 def draw_keyboard(layout: Layout, keyboard: Keyboard):
     key_size = 100
-    mx = 0
-    for ox, oy, group in keyboard.groups:
-        for row in group.rows:
-            mx = max(mx, ox + row.left_width + len(row.keys) + row.right_width)
-    wd = int(mx * key_size + 1)
-    im = Image.new("RGB", (wd, int(7 * key_size) + 1), (255, 255, 255))
+    minx, miny, maxx, maxy = keyboard.bounds()
+    if (minx, miny, maxx, maxy) == (0, 0, 0, 0):
+        return Image.new("RGB", (0, 0))
+    miny -= 0.5  # title
+    wd, ht = int((maxx - minx) * key_size + 1), int((maxy - miny) * key_size + 1)
+    im = Image.new("RGB", (wd, ht), (255, 255, 255))
     draw = ImageDraw.Draw(im, "RGB")
     font = ImageFont.truetype('segoeui', 24)
-    draw_text(draw, wd // 2, 0.25 * key_size, font, layout.name + " by " + layout.author)
-    for ox, oy, group in keyboard.groups:
-        for y, row in enumerate(group.rows):
-            if row.left is not None:
-                draw_key(ox * key_size, (y * group.height + oy) * key_size, row.left_width * key_size, group.height * key_size, draw, layout, ScanCode(row.left, group.prefix), font)
-            for x, key in enumerate(row.keys):
-                draw_key((x + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, key_size, group.height * key_size, draw, layout, ScanCode(key, group.prefix), font, not group.special)
-            if row.right is not None:
-                draw_key((len(row.keys) + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, row.right_width * key_size, group.height * key_size, draw, layout, ScanCode(row.right, group.prefix), font)
+    draw_text(draw, (maxx - minx) * key_size / 2, 0.25 * key_size, font, layout.name + " by " + layout.author)
+    for bounds, scancode, special in keyboard:
+        x1, y1, x2, y2 = bounds
+        draw_key(
+            (x1 - minx) * key_size,
+            (y1 - miny + 0.5) * key_size,
+            (x2 - x1) * key_size,
+            (y2 - y1) * key_size,
+            draw,
+            layout,
+            scancode,
+            font,
+            not special,
+        )
     return im
 
 

@@ -85,6 +85,9 @@
                </item>
                <item>
                 <widget class="QPushButton" name="btnVscVkSwap">
+                 <property name="enabled">
+                  <bool>false</bool>
+                 </property>
                  <property name="toolTip">
                   <string>Replace all occurences of this VK</string>
                  </property>
@@ -170,7 +173,6 @@
      <property name="title">
       <string>Keyboard</string>
      </property>
-     <addaction name="actionHidden"/>
     </widget>
     <addaction name="menuKeyboard"/>
    </widget>
@@ -240,7 +242,7 @@
     <string>Ctrl+M</string>
    </property>
   </action>
-  <action name="actionHidden">
+  <action name="actionKeyboardHidden">
    <property name="checkable">
     <bool>true</bool>
    </property>

@@ -21,12 +21,22 @@ from bisect import bisect_left
 from typing import Union
 
 from PyQt5.QtCore import QAbstractListModel, QModelIndex, Qt
-from PyQt5.QtWidgets import QComboBox, QFileDialog, QLineEdit, QMainWindow, QPushButton, QGroupBox
+from PyQt5.QtWidgets import (
+    QAction,
+    QComboBox,
+    QFileDialog,
+    QGroupBox,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QPushButton, QActionGroup,
+)
 
-from PyKbd.layout import Layout, ScanCode, KeyCode, ShiftState
 from PyKbd.data import win_vk
+from PyKbd.layout import KeyCode, Layout, ScanCode, ShiftState
+from PyKbd.visualizer import all as all_keyboards
 
-from .._util import connect, load_layout, connected
+from .._util import connect, connected, load_layout
 from . import _version
 from .keyboardwidget import KeyboardWidget
 from .metadata import MetadataWindow
@@ -50,6 +60,10 @@ class _ComboVscModel(QAbstractListModel):
 
     def reload(self):
         self.beginResetModel()
+        self.kbd_layout.keymap = {
+            vsc: vk for vsc, vk in sorted(self.kbd_layout.keymap.items())
+            if vsc == self.inserting or not win_vk.code_to_vk.get(vk.win_vk & ~win_vk.KBDEXT, win_vk.VK__none_).reserved
+        }
         self.keys = list(sorted(self.kbd_layout.keymap.keys()))
         self.inserting = False
         self.endResetModel()
@@ -87,7 +101,7 @@ class _ComboVscModel(QAbstractListModel):
             return name
 
     def setData(self, index: QModelIndex, value, role: int = ...) -> bool:
-        if role == Qt.EditRole:
+        if role in (Qt.EditRole, Qt.DisplayRole):
             assert self.inserting is True
             assert index.row() == len(self.keys)
             try:
@@ -208,10 +222,27 @@ class EditorWindow(QMainWindow):
         load_layout(self, __name__)
         connect(self)
 
-        self.load_metadata()
+        self.setup_base()
         self.setup_keymap()
 
     # ==================== BASE ====================
+
+    menuKeyboard: QMenu
+    actionKeyboardGroup: QActionGroup
+
+    def setup_base(self):
+        self.load_metadata()
+        self.actionKeyboardGroup = QActionGroup(self)
+        self.actionKeyboardGroup.triggered.connect(self.actionKeyboardGroup_)
+        action = self.actionKeyboardGroup.addAction("Hidden")
+        action.setData(None)
+        action.setCheckable(True)
+        for keyboard in all_keyboards:
+            action = self.actionKeyboardGroup.addAction(keyboard.name)
+            action.setData(keyboard)
+            action.setCheckable(True)
+        self.menuKeyboard.addActions(self.actionKeyboardGroup.actions())
+        self.actionKeyboardGroup.actions()[1].trigger()
 
     def closeEvent(self, ev):
         print("closing...")
@@ -242,6 +273,9 @@ class EditorWindow(QMainWindow):
         dlg.accepted.connect(self.load_metadata)
         dlg.open()
 
+    def actionKeyboardGroup_(self, action):
+        self.kbdKeymap.keyboard = action.data()
+
     # ==================== KEYMAP ====================
 
     kbdKeymap: KeyboardWidget
@@ -250,33 +284,62 @@ class EditorWindow(QMainWindow):
     groupVsc: QGroupBox
     editVscName: QLineEdit
     comboVscVk: QComboBox
+    previous_vsc = None
 
     def setup_keymap(self):
+        self.kbdKeymap.style = self.kbdKeymap_style
+        self.kbdKeymap.clicked = self.kbdKeymap_clicked
         self.comboVsc.setModel(_ComboVscModel(self.comboVsc, self.kbd_layout))
         self.comboVscVk.setModel(_ComboVkModel(self.comboVscVk, self.kbd_layout))
         # XXX for some reason this isn't firing on initial model set
         self.comboVsc_currentIndexChanged(self.comboVsc.currentIndex())
 
+    def kbdKeymap_style(self, scancode):
+        if scancode not in self.kbd_layout.keymap:
+            name, color, border = "", "#f88", "#a66"  # red
+        else:
+            keycode = self.kbd_layout.keymap[scancode]
+            vk = win_vk.code_to_vk.get(keycode.win_vk & ~win_vk.KBDEXT)
+            if not vk or vk.reserved:
+                name, color, border = "", "#f88", "#a66"  # red
+            else:
+                name = keycode.name
+                color, border = "#88f", "#66a"  # blue
+                if not name:
+                    color, border = "#8ff", "#6aa"  # cyan
+                    vk = win_vk.translate(keycode.win_vk)
+                    if vk in self.kbd_layout.charmap:
+                        char = self.kbd_layout.charmap[vk].get(ShiftState(), None)
+                        if char:
+                            name = char.char
+                if not name:
+                    name = win_vk.code_to_vk[keycode.win_vk].name
+                    color, border = "#f8f", "#a6a"  # magenta
+        selected = self.comboVsc.currentData(_ComboVscModel.RoleVsc) == scancode
+        return name, color, border, selected
+
+    def kbdKeymap_clicked(self, scancode):
+        if scancode not in self.kbd_layout.keymap:
+            self.comboVsc.insertItem(len(self.kbd_layout.keymap), scancode.to_string())
+            # select inserted entry to reload model
+            self.comboVsc.setCurrentIndex(len(self.kbd_layout.keymap))
+        # extra select if inserting to make sure it is selected
+        self.comboVsc.setCurrentIndex(
+            self.comboVsc.findText(scancode.to_string())
+        )
+
     @connected()
     def comboVsc_currentIndexChanged(self, i):
-        print("comboVsc_currentIndexChanged:", i)
         model = self.comboVsc.model()
-
-        if i < 0:
-            self.btnVscRemove.setEnabled(False)
-            self.groupVsc.setEnabled(False)
-            return
-        else:
-            self.btnVscRemove.setEnabled(True)
-            self.groupVsc.setEnabled(True)
-
         if i == len(model.keys):
             vsc = model.inserting
             assert isinstance(vsc, ScanCode)
             assert vsc not in self.kbd_layout.keymap
             self.kbd_layout.keymap[vsc] = KeyCode(0xFF)
             model.reload()
-            self.comboVsc.setCurrentIndex(model.keys.index(vsc))
+            self.comboVsc.setCurrentIndex(
+                self.comboVsc.findText(vsc.to_string())
+            )
         else:
             self.load_vsc(i)
 
@@ -284,13 +347,22 @@ class EditorWindow(QMainWindow):
         if i is None:
             i = self.comboVsc.currentIndex()
         vsc = self.comboVsc.itemData(i, _ComboVscModel.RoleVsc)
-        keycode = self.kbd_layout.keymap[vsc]
-        self.editVscName.setText(keycode.name)
-        self.editVscName.setPlaceholderText(
-            self.comboVsc.currentData(_ComboVscModel.RoleNameComputed)
-        )
-        self.comboVscVk.setCurrentIndex(self.comboVscVk.findData(keycode.win_vk))
-
+        self.kbdKeymap.update_keys(self.previous_vsc)
+        if vsc != self.previous_vsc:
+            self.kbdKeymap.update_keys(vsc)
+            self.previous_vsc = vsc
+        if i < 0:
+            self.btnVscRemove.setEnabled(False)
+            self.groupVsc.setEnabled(False)
+        else:
+            self.btnVscRemove.setEnabled(True)
+            self.groupVsc.setEnabled(True)
+            keycode = self.kbd_layout.keymap[vsc]
+            self.editVscName.setText(keycode.name)
+            self.editVscName.setPlaceholderText(
+                self.comboVsc.itemData(i, _ComboVscModel.RoleNameComputed)
+            )
+            self.comboVscVk.setCurrentIndex(self.comboVscVk.findData(keycode.win_vk))
 
     @connected()
     def editVscName_editingFinished(self):
