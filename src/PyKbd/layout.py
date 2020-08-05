@@ -108,10 +108,14 @@ class ScanCode:
     code: int
 
     def __init__(self, code, prefix=0):
-        if code < 0 or code > 0xFF:
-            raise ValueError("code must be unsigned byte")
+        if code < 1 or code > 0x7F:
+            raise ValueError("code must be in range 0x01-0x7F")
         if prefix not in (0, 0xE0, 0xE1):
             raise ValueError("prefix must be one of 0, 0xE0, 0xE1")
+        if prefix == 0xE1 and code != 0x1D:
+            raise ValueError("only code 0x1D (VK_PAUSE) is defined for prefix 0xE1")
+        if prefix == 0xE0 and code in (0x36, 0x45):
+            raise ValueError("forbidden code for prefix 0xE0")
         object.__setattr__(self, "prefix", prefix)
         object.__setattr__(self, "code", code)
 
@@ -146,11 +150,14 @@ class KeyCode:
 
     @staticmethod
     def translate_vk(vk: int):
+        """
+        Translate keymap VK to charmap VK.
+        """
         return {
             # drop KBDEXT for VK_DIVIDE and VK_CANCEL
             0x16F: 0x6F, 0x103: 0x03,
-            # drop KBDSPECIAL for VK_MULTIPLY if present
-            # note: KBDSPECIAL is preserved for special keys without characters
+            # drop KBDMULTIVK for VK_MULTIPLY if present
+            # note: KBDMULTIVK is preserved for special keys without characters
             0x26A: 0x6A,
             # apply KBDNUMPAD | KBDSPECIAL translation to VK_NUMPAD* and VK_DECIMAL
             0xC24: 0x67, 0xC26: 0x68, 0xC21: 0x69,
@@ -161,10 +168,14 @@ class KeyCode:
 
     @staticmethod
     def untranslate_vk(vk: int):
+        """
+        Undo translation from keymap VK to charmap VK.
+        Note that the return value is one of multiple valid keymap VKs.
+        """
         return {
             # add KBDEXT to VK_DIVIDE and VK_CANCEL
             0x6F: 0x16F, 0x03: 0x103,
-            # add KBDSPECIAL to VK_MULTIPLY
+            # add KBDMULTIVK to VK_MULTIPLY
             0x6A: 0x26A,
             # translate VK_NUMPAD* and VK_DECIMAL to KBDNUMPAD | KBDSPECIAL navigation keys
             0x67: 0xC24, 0x68: 0xC26, 0x69: 0xC21,

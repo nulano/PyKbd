@@ -44,6 +44,9 @@
               <property name="editable">
                <bool>true</bool>
               </property>
+              <property name="maxVisibleItems">
+               <number>50</number>
+              </property>
              </widget>
             </item>
             <item>
@@ -74,7 +77,11 @@
              <item row="1" column="1">
               <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="1,0">
                <item>
-                <widget class="QComboBox" name="comboVscVk"/>
+                <widget class="QComboBox" name="comboVscVk">
+                 <property name="maxVisibleItems">
+                  <number>50</number>
+                 </property>
+                </widget>
                </item>
                <item>
                 <widget class="QPushButton" name="btnVscVkSwap">
@@ -130,6 +137,9 @@
      <string>File</string>
     </property>
     <widget class="QMenu" name="menuExport">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
      <property name="title">
       <string>Export</string>
      </property>
@@ -201,6 +211,9 @@
    </property>
   </action>
   <action name="actionUndo">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
    <property name="text">
     <string>Undo</string>
    </property>
@@ -209,6 +222,9 @@
    </property>
   </action>
   <action name="actionRedo">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
    <property name="text">
     <string>Redo</string>
    </property>
