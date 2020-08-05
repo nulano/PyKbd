@@ -67,6 +67,7 @@ class KeyboardWidget(QWidget):
         self._keys.clear()
         for bounds, scancode, special in kbd:
             btn = QPushButton("?", self)
+            btn.show()
             btn.setFlat(True)
             btn.setMinimumSize(0, 0)
             btn.clicked.connect(lambda c, s=scancode: self.clicked(s))

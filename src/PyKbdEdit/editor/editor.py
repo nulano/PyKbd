@@ -22,14 +22,14 @@ from typing import Union
 
 from PyQt5.QtCore import QAbstractListModel, QModelIndex, Qt
 from PyQt5.QtWidgets import (
-    QAction,
+    QActionGroup,
     QComboBox,
     QFileDialog,
     QGroupBox,
     QLineEdit,
     QMainWindow,
     QMenu,
-    QPushButton, QActionGroup,
+    QPushButton,
 )
 
 from PyKbd.data import win_vk
@@ -403,7 +403,7 @@ class EditorWindow(QMainWindow):
     def kbdCharmap_style(self, scancode):
         disabled, extra = False, ""
         keycode = self.kbd_layout.keymap.get(scancode, None)
-        vk = keycode and win_vk.code_to_vk.get(win_vk.translate(keycode.win_vk & ~win_vk.KBDEXT), win_vk.VK__none_)
+        vk = keycode and win_vk.code_to_vk.get(win_vk.translate(keycode.win_vk & ~win_vk.KBDEXT), None) or win_vk.VK__none_
         name = "" if vk.reserved else vk.name
         if not vk.mappable:
             color, border, disabled = "#aaa", "#888", True  # gray
