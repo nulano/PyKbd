@@ -20,10 +20,16 @@ import random
 import string
 from datetime import datetime
 
-from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow
+from PyQt5.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QInputDialog,
+    QMainWindow,
+)
 
 from . import _version
-from ._util import connect, load_layout, connected
+from ._util import connect, connected, load_layout
 from .editor import open_editor
 
 __version__ = _version
@@ -36,8 +42,8 @@ class Launcher(QMainWindow):
         load_layout(self, __name__)
         connect(self)
 
-    @staticmethod
-    def action_new():
+    @connected()
+    def actionNew_(self, checked):
         from PyKbd.layout import Layout
         open_editor(Layout(
             name="Unnamed Layout",
@@ -45,16 +51,18 @@ class Launcher(QMainWindow):
             copyright=f"Copyright (c) {datetime.now().year} {os.environ.get('USER', '')}",
             version=(1, 0),
             dll_name=f"kbd_{''.join(random.choice(string.ascii_lowercase) for _ in range(4))}.dll",
-        )).actionMetadata_()
+        )).actionMetadata_(False)
 
-    def action_open(self):
+    @connected()
+    def actionOpen_(self, checked):
         filename = QFileDialog.getOpenFileName(
             self, "Open layout file", filter="Layout Files (*.json);;All Files (*.*)"
         )[0]
         if filename:
             open_editor(filename)
 
-    def action_decompile(self):
+    @connected()
+    def actionDecompile_(self, checked):
         # TODO X11 keyboard support
         filename = QFileDialog.getOpenFileName(
             self,
@@ -68,45 +76,83 @@ class Launcher(QMainWindow):
             windll = WinDll()
             with open(filename, "rb") as f:
                 windll.decompile(f.read())
-            open_editor(windll.layout).actionMetadata_()
+            open_editor(windll.layout).actionMetadata_(False)
 
-    def action_about(self):
+    @connected()
+    def actionAbout_(self, checked):
         dialog = load_layout(QDialog(self), f"{__package__}.about")
         assert isinstance(dialog, QDialog)
         dialog.open()
 
-    def action_license(self):
+    @connected()
+    def actionLicense_(self, checked):
         dialog = load_layout(QDialog(self), f"{__package__}.license")
         assert isinstance(dialog, QDialog)
         dialog.open()
 
     @connected()
-    def actionDbgCollect_(self):
-        import gc
-        print("collecting garbage")
-        print("  total objects:", len(gc.get_objects()))
-        print("  collection counts:", gc.get_count())
-        print("  collected unreachable objects:", gc.collect())
-        print("  total objects:", len(gc.get_objects()))
-
-    actionDbgGrowth_previous = {}
+    def actionDbgCollect_(self, checked):
+        _dbg_collect()
 
     @connected()
-    def actionDbgGrowth_(self):
-        import objgraph
+    def actionDbgGrowth_(self, checked):
+        _dbg_growth()
 
-        print("Growth:")
-        previous = self.actionDbgGrowth_previous
-        now = objgraph.typestats(shortnames=False)
-        deltas = []
-        for name, value in now.items():
-            delta = value - previous.get(name, 0)
-            deltas.append((name, value, delta))
-        deltas.sort(key=lambda x: (-x[2], -x[1], x[0]))
-        for name, total, delta in deltas:
-            if delta != 0:
-                print(f"  {name} {total} ({delta:+})")
-        self.actionDbgGrowth_previous = now
+    @connected()
+    def actionDbgGrowthFiltered_(self, checked):
+        _dbg_growth(True)
+
+    @connected()
+    def actionDbgObjects_(self, checked):
+        _dbg_backrefs(QInputDialog.getText(self, "Print Objects", "Type (short)")[0])
+
+
+def _dbg_collect():
+    import gc
+    print("collecting garbage")
+    print("  total objects:", len(gc.get_objects()))
+    print("  collection counts:", gc.get_count())
+    print("  collected unreachable objects:", gc.collect())
+    print("  collection counts:", gc.get_count())
+    print("  total objects:", len(gc.get_objects()))
+    print("  garbage:", len(gc.garbage))
+
+
+_dbg_growth_previous = {}
+
+
+def _dbg_growth(filter=False):
+    import objgraph
+
+    global _dbg_growth_previous
+
+    print("Growth:")
+    previous = _dbg_growth_previous
+    now = objgraph.typestats(shortnames=False)
+    deltas = []
+    for name, value in now.items():
+        delta = value - previous.get(name, 0)
+        deltas.append((name, value, delta))
+    for name, value in previous.items():
+        if name not in now:
+            deltas.append((name, 0, -value))
+    deltas.sort(key=lambda x: (-x[2], -x[1], x[0]))
+    for name, total, delta in deltas:
+        if filter and not name.startswith("PyKbd"):
+            continue
+        if filter or delta != 0:
+            print(f"  {name} {total} ({delta:+})")
+    _dbg_growth_previous = now
+
+
+def _dbg_backrefs(typename):
+    import objgraph, gc
+    obj = objgraph.by_type(typename)
+    print(f"{typename} ({len(obj)}):")
+    for o in obj:
+        ref = [r for r in gc.get_referrers(o) if r is not obj]
+        print(f"  {o}, referred to by:", ref)
+    objgraph.show_backrefs(obj, 10)
 
 
 def main(argv):
@@ -118,4 +164,11 @@ def main(argv):
     launcher = Launcher()
     launcher.show()
 
-    return application.exec_()
+    ret = application.exec_()
+
+    del launcher
+    del application
+    _dbg_collect()
+    _dbg_growth(True)
+
+    return ret

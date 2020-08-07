@@ -39,16 +39,16 @@ def connected(*args, **kwargs):
         func.connected = (args, kwargs)
         return func
 
+    wrap.connected_wrap = inspect.stack()[1]
     return wrap
 
 
 def connect(wnd: QWidget):
     """
-    Connects ``wnd.action_foo_bar(wnd)`` to ``wnd.actionFooBar`` QActions.
-    The method may optionally take a ``checked`` parameter (name required).
+    Connects ``@connected``-decorated ``myObject_mySignal`` methods of ``wnd``
+    to ``wnd.myObject``'s signal ``mySignal``.
 
-    Connects ``wnd.btn_foo_bar(wnd)`` to ``wnd.btnFooBar`` QPushButtons.
-    The method may optionally take a ``checked`` parameter (name required).
+    ``mySignal`` name is optional for ``QAction.triggered`` and ``QPushButton.clicked``.
     """
     for name, func in wnd.__class__.__dict__.items():
         if hasattr(func, "connected"):
@@ -60,31 +60,11 @@ def connect(wnd: QWidget):
             if action == "":
                 if isinstance(target, QAction):
                     action = "triggered"
-                    if "checked" not in params:
-                        func = lambda checked, f=func: f()
                 elif isinstance(target, QPushButton):
                     action = "clicked"
-                    if "checked" not in params:
-                        func = lambda checked, f=func: f()
             action = getattr(target, action)
             action.connect(func)
-            continue
-
-        name2 = name[0].lower() + string.capwords(name, sep="_").replace("_", "")[1:]
-        target = getattr(wnd, name2, None)
-        if name[:7] == "action_":
-            assert isinstance(target, QAction)
-            assert callable(func) or isinstance(func, (staticmethod, classmethod))
-            func = func.__get__(wnd, wnd.__class__)
-            if "checked" in inspect.signature(func).parameters:
-                target.triggered.connect(lambda checked, f=func: f(checked=checked))
-            else:
-                target.triggered.connect(lambda checked, f=func: f())
-        elif name[:4] == "btn_":
-            assert isinstance(target, QPushButton)
-            assert callable(func) or isinstance(func, (staticmethod, classmethod))
-            func = func.__get__(wnd, wnd.__class__)
-            if "checked" in inspect.signature(func).parameters:
-                target.clicked.connect(lambda checked, f=func: f(checked=checked))
-            else:
-                target.clicked.connect(lambda checked, f=func: f())
+        elif hasattr(func, "connected_wrap"):
+            stack = getattr(func, "connected_wrap")
+            raise TypeError(f"function {name} is connected without parameters\n"
+                            f"  in File \"{stack.filename}\", line {stack.lineno}, in {stack.function}")

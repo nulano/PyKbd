@@ -98,6 +98,8 @@
     </property>
     <addaction name="actionDbgCollect"/>
     <addaction name="actionDbgGrowth"/>
+    <addaction name="actionDbgGrowthFiltered"/>
+    <addaction name="actionDbgObjects"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuDebug"/>
@@ -153,6 +155,21 @@
   <action name="actionDbgGrowth">
    <property name="text">
     <string>Print Type Deltas</string>
+   </property>
+  </action>
+  <action name="actionDbgGrowthFiltered">
+   <property name="text">
+    <string>Print PyKbd Type Counts</string>
+   </property>
+  </action>
+  <action name="actionDbgObjects">
+   <property name="text">
+    <string>Print Type Referrers...</string>
+   </property>
+  </action>
+  <action name="actionPrint_Referrers">
+   <property name="text">
+    <string>Print Referrers...</string>
    </property>
   </action>
  </widget>

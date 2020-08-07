@@ -270,23 +270,23 @@ class EditorWindow(QMainWindow):
         self.setWindowTitle(self.kbd_layout.name)
 
     @connected()
-    def actionSave_(self):
+    def actionSave_(self, checked):
         if not self.filename:
-            self.action_save_as("Save Layout...")
+            self.actionSaveAs_(checked, "Save Layout...")
         else:
             print("saved as", self.filename)
 
     @connected()
-    def actionSaveAs_(self, caption="Save Layout As..."):
+    def actionSaveAs_(self, checked, caption="Save Layout As..."):
         filename = QFileDialog.getSaveFileName(
             self, caption, self.filename, "Layout Files (*.json);;All Files (*.*)"
         )[0]
         if filename:
             self.filename = filename
-            self.action_save()
+            self.actionSave_(checked)
 
     @connected()
-    def actionMetadata_(self):
+    def actionMetadata_(self, checked):
         dlg = MetadataWindow(self, self.kbd_layout)
         dlg.accepted.connect(self.load_metadata)
         dlg.open()
@@ -403,7 +403,7 @@ class EditorWindow(QMainWindow):
         self.load_vsc()
 
     @connected()
-    def btnVscRemove_(self):
+    def btnVscRemove_(self, checked):
         self.comboVsc.removeItem(self.comboVsc.currentIndex())
 
     # ==================== CHARMAP ====================
