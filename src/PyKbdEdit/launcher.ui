@@ -92,7 +92,15 @@
     <addaction name="actionAbout"/>
     <addaction name="actionLicense"/>
    </widget>
+   <widget class="QMenu" name="menuDebug">
+    <property name="title">
+     <string>Debug</string>
+    </property>
+    <addaction name="actionDbgCollect"/>
+    <addaction name="actionDbgGrowth"/>
+   </widget>
    <addaction name="menuFile"/>
+   <addaction name="menuDebug"/>
    <addaction name="menuHelp"/>
   </widget>
   <action name="actionNew">
@@ -135,6 +143,16 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+X</string>
+   </property>
+  </action>
+  <action name="actionDbgCollect">
+   <property name="text">
+    <string>Collect Garbage</string>
+   </property>
+  </action>
+  <action name="actionDbgGrowth">
+   <property name="text">
+    <string>Print Type Deltas</string>
    </property>
   </action>
  </widget>

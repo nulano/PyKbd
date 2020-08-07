@@ -21,6 +21,7 @@ from bisect import bisect_left
 from typing import Union
 
 from PyQt5.QtCore import QAbstractListModel, QModelIndex, Qt
+from PyQt5.QtGui import QShowEvent, QCloseEvent
 from PyQt5.QtWidgets import (
     QActionGroup,
     QComboBox,
@@ -205,6 +206,12 @@ class EditorWindow(QMainWindow):
     filename: typing.Optional[str]
     kbd_layout: Layout
 
+    _immortal = set()
+    """
+    Python GC collects cycles.
+    Use this global variable to prevent open windows from being collected.
+    """
+
     def __init__(self, layout: Union[str, Layout]):
         super(EditorWindow, self).__init__()
 
@@ -245,9 +252,19 @@ class EditorWindow(QMainWindow):
         self.menuKeyboard.addActions(self.actionKeyboardGroup.actions())
         self.actionKeyboardGroup.actions()[1].trigger()
 
-    def closeEvent(self, ev):
+    def showEvent(self, ev: QShowEvent):
+        # do not collect open windows
+        EditorWindow._immortal.add(self)
+
+    def closeEvent(self, ev: QCloseEvent):
         print("closing...")
+
+        # XXX last chance to save current state
+
         ev.accept()
+
+        # window is closing, safe to collect
+        EditorWindow._immortal.remove(self)
 
     def load_metadata(self):
         self.setWindowTitle(self.kbd_layout.name)

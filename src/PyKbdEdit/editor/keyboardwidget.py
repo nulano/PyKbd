@@ -63,6 +63,7 @@ class KeyboardWidget(QWidget):
         self._bounds = kbd.bounds()
         for keys in self._keys.values():
             for bounds, special, key in keys:
+                # remove from my layout and let it be garbage collected
                 key.setParent(None)
         self._keys.clear()
         for bounds, scancode, special in kbd:

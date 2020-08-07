@@ -23,7 +23,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow
 
 from . import _version
-from ._util import connect, load_layout
+from ._util import connect, load_layout, connected
 from .editor import open_editor
 
 __version__ = _version
@@ -79,6 +79,34 @@ class Launcher(QMainWindow):
         dialog = load_layout(QDialog(self), f"{__package__}.license")
         assert isinstance(dialog, QDialog)
         dialog.open()
+
+    @connected()
+    def actionDbgCollect_(self):
+        import gc
+        print("collecting garbage")
+        print("  total objects:", len(gc.get_objects()))
+        print("  collection counts:", gc.get_count())
+        print("  collected unreachable objects:", gc.collect())
+        print("  total objects:", len(gc.get_objects()))
+
+    actionDbgGrowth_previous = {}
+
+    @connected()
+    def actionDbgGrowth_(self):
+        import objgraph
+
+        print("Growth:")
+        previous = self.actionDbgGrowth_previous
+        now = objgraph.typestats(shortnames=False)
+        deltas = []
+        for name, value in now.items():
+            delta = value - previous.get(name, 0)
+            deltas.append((name, value, delta))
+        deltas.sort(key=lambda x: (-x[2], -x[1], x[0]))
+        for name, total, delta in deltas:
+            if delta != 0:
+                print(f"  {name} {total} ({delta:+})")
+        self.actionDbgGrowth_previous = now
 
 
 def main(argv):

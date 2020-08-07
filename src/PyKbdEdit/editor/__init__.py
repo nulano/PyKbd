@@ -28,5 +28,4 @@ __version__ = _version
 def open_editor(layout: _Union[str, _layout.Layout]):
     window = editor.EditorWindow(layout)
     window.show()
-    window._reference = window
     return window

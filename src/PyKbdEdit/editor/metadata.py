@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from PyQt5.QtCore import QRegExp
+from PyQt5.QtCore import QRegExp, Qt
 from PyQt5.QtGui import QRegExpValidator
 from PyQt5.QtWidgets import QDialog, QMessageBox
 
@@ -30,6 +30,8 @@ __version__ = _version
 class MetadataWindow(QDialog):
     def __init__(self, parent, layout: Layout):
         super(MetadataWindow, self).__init__(parent)
+        # this also removes PyQt reference in parent
+        self.setAttribute(Qt.WA_DeleteOnClose)
 
         self.kbd_layout = layout
 
