@@ -120,7 +120,8 @@ class WinDll:
 
     def compile_kbd_keymap(self):
         vsc_to_vk = BinaryObject(alignment=4)
-        for vsc in range(max(map(lambda k: k.code, filter(lambda k: k.prefix == 0, self.layout.keymap))) + 1):
+        vsc_to_vk.append(USHORT(0xFF))
+        for vsc in range(1, max(map(lambda k: k.code, filter(lambda k: k.prefix == 0, self.layout.keymap))) + 1):
             key = self.layout.keymap.get(ScanCode(vsc), KeyCode(0xFF))
             vsc_to_vk.append(USHORT(key.win_vk))
         self.kbd_vsc_to_vk = vsc_to_vk

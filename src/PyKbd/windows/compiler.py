@@ -27,7 +27,6 @@ from . import _version
 __version__ = _version
 
 
-
 def compile(layout: Layout) -> KBDTABLES:
     kbdtables = KBDTABLES()
     

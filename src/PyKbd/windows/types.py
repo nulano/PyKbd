@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass, field
-from typing import Annotated, TypeVar, Tuple, Optional
+from typing import Annotated, TypeVar, Tuple, Optional, Union
 
 from . import _version
 
@@ -50,6 +50,7 @@ UINT = Annotated[int, _WinInt(4, signed=False)]
 ULONG = Annotated[int, _WinInt(4, signed=False)]
 ULONGLONG = Annotated[int, _WinInt(8, signed=False)]
 
+MAKEWORD = Tuple[BYTE, BYTE]
 MAKELONG = Tuple[WORD, WORD]
 
 
@@ -71,11 +72,11 @@ LONG_PTR = Annotated[int, _WinIntPtr(signed=True)]
 
 @dataclass(frozen=True)
 class _WinPtr:
-    long: bool = False
+    sizeof: int = 0
 
 
-PTR = Annotated[Optional[TypeVar("T")], _WinPtr(long=False)]
-LPTR = Annotated[Optional[TypeVar("T")], _WinPtr(long=True)]
+PTR = Annotated[Optional[TypeVar("T")], _WinPtr()]
+RVA = Annotated[Optional[TypeVar("T")], _WinPtr(4)]
 
 
 # ---------- Windows Arrays ----------
@@ -100,7 +101,7 @@ class _LengthFixed(_Length):
 class _LengthReferenced(_Length):
     reference: str
     add: int = 0
-    mul: int = 1
+    mul: Union[int, float] = 1
 
 
 P = LPTR[Annotated[list[TypeVar("T")], _NullTerminated()]]
@@ -125,8 +126,8 @@ WCHAR = Annotated[str, WCHAR_E, _LengthFixed(1)]
 STR = Annotated[str, CHAR_E, _NullTerminated()]
 WSTR = Annotated[str, WCHAR_E, _NullTerminated()]
 
-LPSTR = LPTR[STR]
-LPWSTR = LPTR[WSTR]
+LPSTR = PTR[STR]
+LPWSTR = PTR[WSTR]
 
 MAKELONG_WCHAR = Tuple[WCHAR, WCHAR]
 
@@ -291,7 +292,7 @@ class DEADKEY_LPWSTR:
 @dataclass()
 class KBDTABLES:
     # Modifier keys
-    pCharModifiers: LPTR[MODIFIERS] = None
+    pCharModifiers: PTR[MODIFIERS] = None
 
     # Characters
     pVkToWcharTable: P[VK_TO_WCHAR_TABLE] = None
@@ -302,10 +303,10 @@ class KBDTABLES:
     # Names of Keys
     pKeyNames: P[VSC_LPWSTR] = None
     pKeyNamesExt: P[VSC_LPWSTR] = None
-    pKeyNamesDead: P[LPTR[DEADKEY_LPWSTR]] = None
+    pKeyNamesDead: P[PTR[DEADKEY_LPWSTR]] = None
 
     # Scan codes to Virtual Keys
-    pusVSCtoVK: LPTR[Annotated[list[USHORT], _LengthReferenced("bMaxVSCtoVK")]] = None
+    pusVSCtoVK: PTR[Annotated[list[USHORT], _LengthReferenced("bMaxVSCtoVK")]] = None
     bMaxVSCtoVK: BYTE = 0
     pVSCtoVK_E0: P[VSC_VK] = None
     pVSCtoVK_E1: P[VSC_VK] = None
@@ -317,8 +318,8 @@ class KBDTABLES:
     # Ligatures
     nLgMax: BYTE = 0
     cbLgEntry: BYTE = 0
-    pLigature: LPTR[Annotated[
-        list[LPTR[Annotated[LIGATURE, _LengthReferenced("cbLgEntry")]]],
+    pLigature: PTR[Annotated[
+        list[PTR[Annotated[LIGATURE, _LengthReferenced("cbLgEntry")]]],
         _LengthReferenced("nLgMax"),
     ]] = None
 
