@@ -101,6 +101,9 @@ class BinaryObject:
             address += offset
         return target, address
 
+    def __len__(self):
+        return len(self.data)
+
 
 class BinaryObjectReader:
     target: BinaryObject

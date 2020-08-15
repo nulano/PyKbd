@@ -27,12 +27,16 @@ from .types import (
     CHAR_E,
     DWORD,
     DWORD_PTR,
+    FIXEDFILEINFO,
     MAKELONG,
     MAKEWORD,
     RVA,
     STR,
     WORD,
+    WSTR,
+    Resource,
     _Length,
+    _LengthExpr,
     _LengthFixed,
     _LengthReferenced,
     _NullTerminated,
@@ -57,7 +61,7 @@ class Offset(Symbol):
         offset = 0
         if self.target is not None:
             offset = self.transform((self.target.find_placement() or (None, 0))[1])
-        return Assebmler(self.sizeof)._compile(offset, DWORD_PTR)
+        return Assembler(self.sizeof)._compile(offset, DWORD_PTR)
 
 
 @dataclass(frozen=True)
@@ -71,7 +75,7 @@ class Pointer(Offset):
 
 
 @dataclass()
-class Assebmler:
+class Assembler:
     ptr_size: int
 
     def _alignment(self, tp, *annotations):
@@ -136,6 +140,11 @@ class Assebmler:
                     l = ctx[annotation.reference] * annotation.mul + annotation.add
                     assert isinstance(l, int) or l.is_integer()
                     assert len(obj) == int(l)
+                    ctx["__length"] = int(l)
+                elif isinstance(annotation, _LengthExpr):
+                    l = eval(annotation.expr, globals(), ctx)
+                    assert isinstance(l, int)
+                    assert len(obj) == l
                     ctx["__length"] = int(l)
                 elif isinstance(annotation, _LengthFixed):
                     ctx["__length"] = annotation.length
@@ -256,6 +265,10 @@ class Assebmler:
                     l = ctx[annotation.reference] * annotation.mul + annotation.add
                     assert isinstance(l, int) or l.is_integer()
                     ctx["__length"] = int(l)
+                elif isinstance(annotation, _LengthExpr):
+                    l = eval(annotation.expr, globals(), ctx)
+                    assert isinstance(l, int)
+                    ctx["__length"] = int(l)
                 elif isinstance(annotation, _LengthFixed):
                     ctx["__length"] = annotation.length
                 elif isinstance(annotation, _NullTerminated):
@@ -355,6 +368,149 @@ class Assebmler:
         if not isinstance(data, BinaryObject):
             data = BinaryObject(data)
         return self._decompile(BinaryObjectReader(data, off), tp, __base=base)
+
+
+def _aligned_next(addr, align):
+    return addr + (-addr) % align
+
+
+@dataclass()
+class ResourceNode:
+    wLength: WORD = 0
+    wValueLength: WORD = 0
+    wType: WORD = 1
+    szKey: WSTR = "\0"
+    Value: typing.Annotated[BinaryObject, _LengthExpr("wValueLength << wType")] = field(default_factory=BinaryObject)
+    Children: typing.Annotated[
+        BinaryObject, _LengthExpr(
+            "wLength - 8"
+            " - ((2 * len(szKey) + 3) & 0x1FFFC)"
+            " - (((wValueLength << wType) + 3) & 0x1FFFC)"
+        )
+    ] = field(default_factory=BinaryObject)
+
+
+@dataclass()
+class ResourceEntry:
+    Data: RVA[typing.Annotated[BinaryObject, _LengthReferenced("Size")]] = None
+    Size: DWORD = 0
+    Codepage: DWORD = 0
+    Reserved: DWORD = 0
+
+
+@dataclass()
+class ResourceTableRow:
+    ID: DWORD
+    Entry: DWORD
+
+
+@dataclass()
+class ResourceTable:
+    Characteristicts: DWORD = 0
+    TimeDateStamp: DWORD = 0
+    Version: MAKELONG = (0, 0)
+    NumberOfNameEntries: WORD = 0
+    NumberOfIDEntries: WORD = 0
+    NameEntries: typing.Annotated[list[ResourceTableRow], _LengthReferenced("NumberOfNameEntries")] = field(default_factory=list)
+    IDEntries: typing.Annotated[list[ResourceTableRow], _LengthReferenced("NumberOfIDEntries")] = field(default_factory=list)
+
+
+@dataclass()
+class VS_FIXEDFILEINFO:
+    dwSignature: DWORD = 0xFEEF04BD
+    dwStrucVersion: MAKELONG = (0, 1)
+    dwFileVersionMS: MAKELONG = (0, 1)
+    dwFileVersionLS: MAKELONG = (0, 0)
+    dwProductVersionMS: MAKELONG = (0, 1)
+    dwProductVersionLS: MAKELONG = (0, 0)
+    dwFileFlagsMask: DWORD = 0
+    dwFileFlags: DWORD = 0
+    dwFileOS: DWORD = 0
+    dwFileType: DWORD = 0
+    dwFileSubtype: DWORD = 0
+    dwFileDateMS: DWORD = 0
+    dwFileDateLS: DWORD = 0
+
+
+@dataclass()
+class ResourceCompiler:
+    base: int
+
+    assembler: Assembler = field(default_factory=lambda: Assembler(4))
+
+    def compile_value(self, val):
+        if isinstance(val, FIXEDFILEINFO):
+            v = VS_FIXEDFILEINFO()
+            v.dwFileVersionMS = val.FILEVERSION[1::-1]
+            v.dwFileVersionLS = val.FILEVERSION[:1:-1]
+            v.dwProductVersionMS = val.PRODUCTVERSION[1::-1]
+            v.dwProductVersionLS = val.PRODUCTVERSION[:1:-1]
+            v.dwFileFlagsMask = val.FILEFLAGSMASK
+            v.dwFileFlags = val.FILEFLAGS
+            v.dwFileOS = val.FILEOS
+            v.dwFileType = val.FILETYPE
+            v.dwFileSubtype = val.FILESUBTYPE
+            typ, val, tp = 0, v, VS_FIXEDFILEINFO
+        elif isinstance(val, str):
+            typ, tp = 1, WSTR
+        else:
+            assert is_dataclass(val)
+            typ, tp = 0, type(val)
+        return typ, self.assembler._compile(val, tp)
+
+    def compile_node(self, key: str, res: typing.Union[Resource, str, dict, typing.Any]):
+        if not isinstance(res, Resource):
+            if isinstance(res, dict):
+                res = Resource(None, res)
+            else:
+                res = Resource(res, {})
+        node = ResourceNode()
+        node.szKey = key
+        if res.Value is not None:
+            node.wType, node.Value = self.compile_value(res.Value)
+            node.Value.alignment = 4
+            node.wValueLength = len(node.Value.data)
+            if node.wType:
+                node.wValueLength //= 2
+        node.Children.alignment = 4
+        for name, child in res.Children.items():
+            node.Children.append(self.compile_node(name, child))
+        node.wLength = _aligned_next(8 + 2*len(node.szKey), 4)
+        node.wLength += _aligned_next(len(node.Value), 4)
+        node.wLength += len(node.Children)
+        out = self.assembler.compile(node)
+        out.alignment = 4
+        out.append_padding(4)
+        return out
+
+    def compile_tables(self, table: dict):
+        tables = ResourceTable()
+
+        name_entries = {key: value for key, value in table.items() if isinstance(key, str)}
+        id_entries = {key: value for key, value in table.items() if isinstance(key, int)}
+
+        assert len(name_entries) == 0, "not implemented"
+
+        entries_data = {}
+        entries_subdir = {}
+        tables.NumberOfIDEntries = len(id_entries)
+        for key, value in sorted(id_entries.items(), key=itemgetter(0)):
+            next = len(entries_data) + len(entries_subdir) + 0xFEED1273
+            if not isinstance(value, BinaryObject):
+                entries_subdir[next] = self.compile_tables(value)
+            else:
+                entries_data[next] = ResourceEntry(value, len(value))
+            tables.IDEntries.append(ResourceTableRow(key, next))
+
+        tables = self.assembler.compile(tables)
+        for key, entry in entries_data.items():
+            entry = self.assembler.compile(entry)
+            tables.symbols[tables.data.index(self.assembler._compile(key, DWORD).data)] = Pointer(entry, 4, -self.base)
+        for key, entry in entries_subdir.items():
+            entry = self.assembler.compile(entry)
+            tables.symbols[tables.data.index(self.assembler._compile(key, DWORD).data)] = Pointer(entry, 4, 0x80000000-self.base)
+
+        return tables
 
 
 @dataclass()
@@ -524,10 +680,6 @@ WOW64 = Architecture(8, 4, 0x14C,  0x2102, 0x10b, 0x00005FFE0000, b"\xB8%b\x99\x
 AMD64 = Architecture(8, 8, 0x8664, 0x2022, 0x20b, 0x001800000000, b"\x48\xB8%b\xC3", '64', 'Windows-amd64')
 
 
-def _aligned_next(addr, align):
-    return addr + (-addr) % align
-
-
 @dataclass()
 class Compiler:
     layout: Layout
@@ -538,18 +690,20 @@ class Compiler:
     align_file: int = 0x200
     align_section: int = 0x1000
 
-    assembler: typing.Optional[Assebmler] = None
+    assembler: typing.Optional[Assembler] = None
 
     dir_export: typing.Optional[BinaryObject] = None
+    dir_rsrc: typing.Optional[BinaryObject] = None
     dir_reloc: typing.Optional[BinaryObject] = None
 
     sec_data: typing.Optional[BinaryObject] = None
+    sec_rsrc: typing.Optional[BinaryObject] = None
     sec_reloc: typing.Optional[BinaryObject] = None
 
     file: typing.Optional[BinaryObject] = None
 
     def compile(self):
-        self.assembler = Assebmler(self.arch.pointer_func)
+        self.assembler = Assembler(self.arch.pointer_func)
 
         # skip header "section"
         next_section = self.align_section
@@ -557,6 +711,10 @@ class Compiler:
         self.compile_sec_data(next_section)
         assert self.sec_data.placement == (None, next_section)
         next_section += _aligned_next(len(self.sec_data.data), self.align_section)
+
+        self.compile_sec_rsrc(next_section)
+        assert self.sec_rsrc.placement == (None, next_section)
+        next_section += _aligned_next(len(self.sec_rsrc.data), self.align_section)
 
         self.compile_sec_reloc(next_section)
         assert self.sec_reloc.placement == (None, next_section)
@@ -569,7 +727,7 @@ class Compiler:
         """Keyboard data and functions"""
         func_ptr = lambda obj: Offset(obj, self.arch.pointer_func)
 
-        kbdtables = Assebmler(self.arch.pointer).compile(compiler.compile(self.layout))
+        kbdtables = Assembler(self.arch.pointer).compile(compiler.compile_kbd_tables(self.layout))
 
         KbdLayerDescriptor = BinaryObject(self.arch.func % func_ptr(None)().data)
         KbdLayerDescriptor.symbols[self.arch.func.index(b"%b")] = func_ptr(kbdtables)
@@ -606,6 +764,16 @@ class Compiler:
         self.dir_export = dir_export
         self.sec_data = link([dir_export, code], base=base)
         self.sec_data.alignment = self.align_file
+
+    def compile_sec_rsrc(self, base):
+        rc = ResourceCompiler(base)
+
+        version_info = compiler.compile_resources(self.layout)
+        version_info = rc.compile_node("VS_VERSION_INFO", version_info)
+
+        rsrc = rc.compile_tables({0x10: {1: {0x409: version_info}}})
+        self.sec_rsrc = self.dir_rsrc = link([rsrc], base=base)
+        self.sec_rsrc.alignment = self.align_file
 
     def compile_sec_reloc(self, base):
         blocks = defaultdict(set)
@@ -663,7 +831,7 @@ class Compiler:
         headers.pe.opt.Directories = [Directory()] * 16
         for i, d in (
                 (0, self.dir_export),
-                # (2, self.dir_rsrc),
+                (2, self.dir_rsrc),
                 (5, self.dir_reloc)
         ):
             headers.pe.opt.Directories[i] = Directory(d.find_placement()[1], len(d.data))
@@ -671,7 +839,7 @@ class Compiler:
 
         for name, section, characteristics in (
                 (".data\0\0\0", self.sec_data, 0x60000040),  # char: init data, read, execute
-                # (".rsrc\0\0\0", self.sec_rsrc, 0x42000040),  # char: init data, read, discard
+                (".rsrc\0\0\0", self.sec_rsrc, 0x42000040),  # char: init data, read, discard
                 (".reloc\0\0", self.sec_reloc, 0x42000040),  # char: init data, read, discard
         ):
             s = Section(name)

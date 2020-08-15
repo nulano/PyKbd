@@ -16,13 +16,16 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass, field
-from typing import Annotated, TypeVar, Tuple, Optional, Union
+from typing import Annotated, TypeVar, Tuple, Optional, Union, Generic, Any
 
 from . import _version
 
 
 __version__ = _version
 
+
+_T1 = TypeVar("_T1")
+_T2 = TypeVar("_T2")
 
 # ---------- Windows Integer Types ----------
 
@@ -75,8 +78,8 @@ class _WinPtr:
     sizeof: int = 0
 
 
-PTR = Annotated[Optional[TypeVar("T")], _WinPtr()]
-RVA = Annotated[Optional[TypeVar("T")], _WinPtr(4)]
+PTR = Annotated[Optional[_T1], _WinPtr()]
+RVA = Annotated[Optional[_T1], _WinPtr(4)]
 
 
 # ---------- Windows Arrays ----------
@@ -104,7 +107,12 @@ class _LengthReferenced(_Length):
     mul: Union[int, float] = 1
 
 
-P = LPTR[Annotated[list[TypeVar("T")], _NullTerminated()]]
+@dataclass(frozen=True)
+class _LengthExpr(_Length):
+    expr: str
+
+
+P = PTR[Annotated[list[_T2], _NullTerminated()]]
 """Long Pointer to Null-Terminated Array."""
 
 
@@ -326,3 +334,28 @@ class KBDTABLES:
     # Type and subtype. These are optional.
     dwType: DWORD = 0
     dwSubType: DWORD = 0
+
+
+# ---------- Resources ----------
+
+
+@dataclass()
+class Var:
+    Value: list[MAKELONG] = field(default_factory=list)
+
+
+@dataclass()
+class Resource:
+    Value: Any = None
+    Children: dict[WSTR, Any] = field(default_factory=dict)
+
+
+@dataclass()
+class FIXEDFILEINFO:
+    FILEVERSION: Tuple[WORD, WORD, WORD, WORD] = (1, 0, 0, 0)
+    PRODUCTVERSION: Tuple[WORD, WORD, WORD, WORD] = (1, 0, 0, 0)
+    FILEFLAGSMASK: DWORD = 0
+    FILEFLAGS: DWORD = 0
+    FILEOS: DWORD = 0
+    FILETYPE: DWORD = 0
+    FILESUBTYPE: DWORD = 0

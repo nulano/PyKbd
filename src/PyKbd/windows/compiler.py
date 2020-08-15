@@ -16,6 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import dataclasses
+from operator import itemgetter
 from warnings import warn
 
 from .types import *
@@ -27,7 +28,7 @@ from . import _version
 __version__ = _version
 
 
-def compile(layout: Layout) -> KBDTABLES:
+def compile_kbd_tables(layout: Layout) -> KBDTABLES:
     kbdtables = KBDTABLES()
     
     kbdtables.fLocaleFlags = (1, 1)
@@ -188,6 +189,39 @@ def compile_kbd_charmap(kbdtables: KBDTABLES, layout: Layout):
     kbdtables.nLgMax = 0
     kbdtables.cbLgEntry = 0
     kbdtables.pLigature = None
+
+
+def compile_resources(layout: Layout) -> Resource:
+    vs_version_info = Resource()
+
+    vs_version_info.Value = FIXEDFILEINFO()
+    vs_version_info.Value.FILEVERSION = (*layout.version, 0, 0)
+    vs_version_info.Value.PRODUCTVERSION = (*layout.version, 0, 0)
+    vs_version_info.Value.FILEFLAGSMASK = 0x3F
+    vs_version_info.Value.FILEFLAGS = 0
+    vs_version_info.Value.FILEOS = 0x00040004  # VS_NT_WINDOWS32
+    vs_version_info.Value.FILETYPE = 2  # VFT_DLL
+    vs_version_info.Value.FILESUBTYPE = 2  # VFT2_DRV_KEYBOARD
+    
+    vs_version_info.Children["StringFileInfo"] = {
+        "000004b0": {
+            key: value for key, value in sorted({
+                "CompanyName": layout.author,
+                "FileDescription": layout.name,
+                "FileVersion": "%i.%i" % layout.version,
+                "InternalName": layout.dll_name[:-4],
+                "LegalCopyright": layout.copyright,
+                "OriginalFilename": layout.dll_name,
+                "ProductName": layout.name,
+                "ProductVersion": "%i.%i" % layout.version,
+            }.items(), key=itemgetter(0))
+        }
+    }
+    vs_version_info.Children["VarFileInfo"] = {
+        "Translation": Var([(0, 1200)])
+    }
+
+    return vs_version_info
 
 
 def decompile(kbdtables: KBDTABLES) -> Layout:
