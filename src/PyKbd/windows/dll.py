@@ -19,10 +19,10 @@ import typing
 from collections import defaultdict
 from dataclasses import dataclass, field, is_dataclass
 from operator import itemgetter
+from warnings import warn
 
-from ..layout import Layout
 from ..linker_binary import BinaryObject, BinaryObjectReader, Symbol, link
-from . import _version, _version_num, compiler
+from . import _version, _version_num
 from .types import (
     CHAR_E,
     DWORD,
@@ -43,7 +43,7 @@ from .types import (
     _StrEncoding,
     _WinInt,
     _WinIntPtr,
-    _WinPtr,
+    _WinPtr, KBDTABLES,
 )
 
 __version__ = _version
@@ -96,6 +96,8 @@ class Assembler:
             return sum(self._alignment(tp) for tp in typing.get_args(tp))
         elif typing.get_origin(tp) is typing.Annotated:
             return self._alignment(*typing.get_args(tp))
+        elif tp is bytes or tp is BinaryObject:
+            return 1
         elif typing.get_origin(tp) is list:
             tp, = typing.get_args(tp)
             return self._alignment(tp)
@@ -255,7 +257,11 @@ class Assembler:
                 else:
                     addr = self._decompile(data, int, _WinInt(annotation.sizeof, False))
                 if addr != 0:
-                    return self._decompile(BinaryObjectReader(data.target, addr - ctx["__base"]), tp, *annotations, **ctx)
+                    addr = ctx["__conv"](addr - ctx["__base"])
+                    obj = self._decompile(BinaryObjectReader(data.target, addr), tp, *annotations, **ctx)
+                    if isinstance(obj, BinaryObject):
+                        obj.placement = (data.target, addr)
+                    return obj
                 else:
                     return None
             elif isinstance(annotation, _Length):
@@ -275,7 +281,10 @@ class Assembler:
                     ctx["__length"] = _NullTerminated()
                 else:
                     raise NotImplementedError(annotation)
-                return self._decompile(data, tp, *annotations, **ctx)
+                out = self._decompile(data, tp, *annotations, **ctx)
+                if not isinstance(annotation, _NullTerminated):
+                    assert len(out) == ctx["__length"]
+                return out
             elif isinstance(annotation, _StrEncoding):
                 assert len(annotations) == 0
                 assert tp is str
@@ -338,11 +347,7 @@ class Assembler:
             delayed = {}
             out = tp()
             fields = typing.get_type_hints(tp, include_extras=True)
-            ctx2 = {}
-            if "__length" in ctx:
-                ctx2["__length"] = ctx["__length"]
-            if "__base" in ctx:
-                ctx2["__base"] = ctx["__base"]
+            ctx2 = {k: v for k, v in ctx.items() if k.startswith("__")}
             for name, type_hint in fields.items():
                 if typing.get_origin(type_hint) is typing.Annotated and \
                         isinstance(typing.get_args(type_hint)[-1], _WinPtr):
@@ -363,11 +368,24 @@ class Assembler:
         else:
             raise NotImplementedError(tp)
 
-    def decompile(self, data, tp, off=0, base=0):
-        """Compile struct"""
-        if not isinstance(data, BinaryObject):
-            data = BinaryObject(data)
-        return self._decompile(BinaryObjectReader(data, off), tp, __base=base)
+    def decompile(self, data, tp, off=0, base=0, conv=lambda x: x):
+        """
+        Decompile struct
+
+        :param data: The raw data to decompile.
+                     Converted to BinaryObject if not a BinaryObjectReader.
+        :param tp:   Expected type of struct.
+        :param off:  Offset of struct in given data if it is not a BinaryObjectReader.
+        :param base: Subtracted from pointers before reading pointed-to struct.
+        :param conv: Pointer conversion routine, accepts subtracted address.
+        """
+        if isinstance(data, BinaryObjectReader):
+            reader = data
+        else:
+            if not isinstance(data, BinaryObject):
+                data = BinaryObject(data, alignment=self.ptr_size)
+            reader = BinaryObjectReader(data, off)
+        return self._decompile(reader, tp, __base=base, __conv=conv)
 
 
 def _aligned_next(addr, align):
@@ -532,6 +550,26 @@ class Section:
     NumberOfLinenumbers: WORD = 0
     Characteristics: DWORD = 0
 
+    def __lt__(self, other):
+        if self.__class__ == other.__class__:
+            return self.VirtualAddress < other.VirtualAddress
+        return NotImplemented
+    
+    def __le__(self, other):
+        if self.__class__ == other.__class__:
+            return self.VirtualAddress <= other.VirtualAddress
+        return NotImplemented
+
+    def __gt__(self, other):
+        if self.__class__ == other.__class__:
+            return self.VirtualAddress > other.VirtualAddress
+        return NotImplemented
+
+    def __ge__(self, other):
+        if self.__class__ == other.__class__:
+            return self.VirtualAddress >= other.VirtualAddress
+        return NotImplemented
+
 
 @dataclass()
 class HeaderOpt:
@@ -658,8 +696,8 @@ class DirReloc:
 
 @dataclass(frozen=True)
 class Architecture:
-    pointer: int  # sizeof KBD_LONG_POINTER
-    pointer_func: int  # sizeof pointer
+    pointer_tables: int  # sizeof KBD_LONG_POINTER
+    pointer_native: int  # sizeof pointer
 
     machine: int  # coff.Machine
     characteristics: int  # coff.Characteristics
@@ -682,10 +720,13 @@ AMD64 = Architecture(8, 8, 0x8664, 0x2022, 0x20b, 0x001800000000, b"\x48\xB8%b\x
 
 @dataclass()
 class Compiler:
-    layout: Layout
     arch: Architecture
 
+    kbdtables: KBDTABLES
+    versioninfo: Resource
+
     timestamp: int
+    dll_name: str
 
     align_file: int = 0x200
     align_section: int = 0x1000
@@ -703,7 +744,7 @@ class Compiler:
     file: typing.Optional[BinaryObject] = None
 
     def compile(self):
-        self.assembler = Assembler(self.arch.pointer_func)
+        self.assembler = Assembler(self.arch.pointer_native)
 
         # skip header "section"
         next_section = self.align_section
@@ -725,16 +766,16 @@ class Compiler:
 
     def compile_sec_data(self, base):
         """Keyboard data and functions"""
-        func_ptr = lambda obj: Offset(obj, self.arch.pointer_func)
+        func_ptr = lambda obj: Offset(obj, self.arch.pointer_native)
 
-        kbdtables = Assembler(self.arch.pointer).compile(compiler.compile_kbd_tables(self.layout))
+        kbdtables = Assembler(self.arch.pointer_tables).compile(self.kbdtables)
 
         KbdLayerDescriptor = BinaryObject(self.arch.func % func_ptr(None)().data)
         KbdLayerDescriptor.symbols[self.arch.func.index(b"%b")] = func_ptr(kbdtables)
 
         export = DirExport()
         export.timestamp = self.timestamp
-        export.name = self.layout.dll_name
+        export.name = self.dll_name
         export.ordinal_base = 1
         export.address_count = 1
         export.name_count = 1
@@ -768,8 +809,7 @@ class Compiler:
     def compile_sec_rsrc(self, base):
         rc = ResourceCompiler(base)
 
-        version_info = compiler.compile_resources(self.layout)
-        version_info = rc.compile_node("VS_VERSION_INFO", version_info)
+        version_info = rc.compile_node("VS_VERSION_INFO", self.versioninfo)
 
         rsrc = rc.compile_tables({0x10: {1: {0x409: version_info}}})
         self.sec_rsrc = self.dir_rsrc = link([rsrc], base=base)
@@ -813,7 +853,7 @@ class Compiler:
             for sec in (self.sec_data, self.sec_reloc)
         )
         headers.pe.opt.BaseOfCode = self.sec_data.placement[1]
-        if self.arch.pointer_func == 8:
+        if self.arch.pointer_native == 8:
             headers.pe.opt.BaseOfData = self.arch.base & 0xFFFFFFFF
             headers.pe.opt.ImageBase = self.arch.base >> 32
         else:
@@ -821,11 +861,11 @@ class Compiler:
             headers.pe.opt.ImageBase = self.arch.base
         headers.pe.opt.SectionAlignment = self.align_section
         headers.pe.opt.FileAlignment = self.align_file
-        headers.pe.opt.ImageVersion = self.layout.version
+        headers.pe.opt.ImageVersion = self.versioninfo.Value.FILEVERSION[:2]
         headers.pe.opt.SizeOfImage = _aligned_next(
             self.sec_reloc.placement[1] + len(self.sec_reloc.data), self.align_section
         )
-        headers.pe.opt.SizeOfHeaders = 3*self.align_file  # FIXME
+        headers.pe.opt.SizeOfHeaders = 2*self.align_file  # FIXME
         headers.pe.opt.CheckSum = 0x83D6DB17  # FIXME
         headers.pe.opt.NumberOfRvaAndSizes = 16
         headers.pe.opt.Directories = [Directory()] * 16
@@ -857,3 +897,139 @@ class Compiler:
         mz.append(dos_stub)
         mz.append(b"Generated with PyKbd %a for %a" % (__version__, self.arch.name))
         self.file = link([mz])
+
+
+@dataclass()
+class Decompiler:
+    data: typing.Union[bytes, BinaryObject]
+
+    arch: Architecture = X86
+    base: int = 0
+
+    assembler: Assembler = field(default_factory=lambda: Assembler(4))
+
+    sections: typing.Optional[list[Section]] = None
+
+    dir_export: typing.Optional[BinaryObject] = None
+    dir_rsrc: typing.Optional[BinaryObject] = None
+
+    timestamp: int = 0
+    dll_name: typing.Optional[str] = None
+
+    kbdtables: typing.Optional[KBDTABLES] = None
+    versioninfo: typing.Optional[Resource] = None
+
+    def convert_rva(self, rva):
+        """Convert RVA to file offset or raise ValueError"""
+        for section in self.sections:
+            if section.VirtualAddress <= rva:
+                offset = rva - section.VirtualAddress
+                if offset < section.VirtualSize:
+                    assert offset < section.SizeOfRawData
+                    return section.PointerToRawData.placement[1] + offset
+        raise ValueError(rva)
+
+    def decompile(self):
+        if not isinstance(self.data, BinaryObject):
+            self.data = BinaryObject(self.data, 4)
+
+        self.decompile_header()
+
+        self.decompile_dir_export()
+
+        return self.kbdtables, self.versioninfo, self.timestamp, self.dll_name
+
+    def decompile_header(self):
+        reader = BinaryObjectReader(self.data)
+
+        reader.read_or_fail(b"MZ")
+        reader.offset = 0x3C
+        pe_offset = self.assembler.decompile(reader, DWORD)
+        dos = reader.read_bytes(pe_offset - 0x40)
+        reader.read_or_fail(b"PE\0\0")
+        coff_machine = self.assembler.decompile(reader, WORD)
+        if coff_machine == X86.machine:
+            self.arch = X86  # could be WOW64, checked later
+        elif coff_machine == AMD64.machine:
+            self.arch = AMD64
+            self.data.alignment = 8  # FIXME changing guess from decompile()
+                                     #       should not affect given BinaryObject
+        else:
+            raise IOError("unknown architecture: %x" % coff_machine)
+        self.assembler.ptr_size = self.arch.pointer_native
+
+        header = self.assembler.decompile(self.data, HeaderDOS)
+
+        assert isinstance(header.pe, HeaderCOFF)
+        assert header.pe.Machine == self.arch.machine
+        if header.pe.Characteristics & 0xFFF3 != self.arch.characteristics:
+            warn("read COFF Characteristics differ")
+        self.timestamp = header.pe.TimeDateStamp
+
+        assert isinstance(header.pe.opt, HeaderOpt)
+        assert header.pe.opt.Magic == self.arch.magic
+        self.base = header.pe.opt.ImageBase
+        if self.arch.pointer_native == 8:
+            self.base = self.base << 32 + header.pe.opt.BaseOfData
+
+        self.sections = list(sorted(header.pe.sections))
+
+        for name, num in (("export", 0), ("rsrc", 2)):
+            if len(header.pe.opt.Directories) > num:
+                directory = header.pe.opt.Directories[num]
+                if directory.VirtualAddress != 0 and directory.Size != 0:
+                    off = self.convert_rva(directory.VirtualAddress)
+                    obj = BinaryObject(self.data.data[off:off + directory.Size], 4)
+                    assert len(obj) == directory.Size
+                    obj.placement = (None, directory.VirtualAddress)
+                    setattr(self, f"dir_{name}", obj)
+
+    def decompile_dir_export(self):
+        reader = BinaryObjectReader(self.dir_export)
+
+        dir_export = self.assembler.decompile(reader, DirExport, base=self.dir_export.placement[1])
+        self.dll_name = dir_export.name
+
+        for name, ordinal in zip(dir_export.names, dir_export.ordinals):
+            if name == "KbdLayerDescriptor":
+                KbdLayerDescriptor_rva = dir_export.addresses[ordinal - dir_export.ordinal_base]
+                KbdLayerDescriptor_off = self.convert_rva(KbdLayerDescriptor_rva)
+                break
+            else:
+                warn("ignoring unknown function %s" % name)
+        else:
+            raise IOError("not a valid keyboard layout")
+
+        # function is typically shorter than 16 bytes
+        reader = BinaryObjectReader(
+            BinaryObject(self.data.data[KbdLayerDescriptor_off:KbdLayerDescriptor_off+16])
+        )
+
+        if self.arch == AMD64:
+            reader.read_or_fail(b"\x48")
+        ins = reader.read_bytes(1)
+        if ins == b"\xB8":  # MOV EAX, ...
+            table_rva_bts = reader.read_bytes(self.arch.pointer_native)
+            table_rva = self.assembler.decompile(table_rva_bts, DWORD_PTR) - self.base
+            ins = reader.read_bytes(1)
+            if ins == b"\x99":  # CDQ
+                if self.arch == X86:
+                    self.arch = WOW64
+                elif self.arch != WOW64:
+                    raise IOError("unexpected instruction: 0x%X" % ins)
+                ins = reader.read_bytes(1)
+        elif ins == b"\x8D":  # LEA ...
+            reader.read_or_fail(b"\x05")  # (ModR/M) ... EAX, [disp32]
+            table_rva_bts = reader.read_bytes(4)
+            table_rva = self.assembler.decompile(table_rva_bts, DWORD)
+            table_rva += KbdLayerDescriptor_rva + reader.offset
+            ins = reader.read_bytes(1)
+        else:
+            raise IOError("unexpected instruction: 0x%X" % ins)
+        if ins != b"\xC3":  # RET
+            raise IOError("unexpected instruction: 0x%X" % ins)
+
+        table_off = self.convert_rva(table_rva)
+        self.kbdtables = Assembler(self.arch.pointer_tables).decompile(
+            self.data, KBDTABLES, off=table_off, base=self.arch.base, conv=self.convert_rva
+        )
