@@ -181,6 +181,10 @@ class Character:
     char: str
     dead: bool = False
 
+    @property
+    def ligature(self):
+        return len(self.char.encode("utf-16le")) > 2
+
 
 @dataclass(frozen=True)
 class DeadKey:

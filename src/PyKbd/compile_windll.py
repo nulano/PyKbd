@@ -45,7 +45,9 @@ class WinDll:
     kbd_vsc_to_vk: Optional[BinaryObject] = None
     kbd_vsc_to_vk_e0: Optional[BinaryObject] = None
     kbd_vsc_to_vk_e1: Optional[BinaryObject] = None
-    # kbd_ligature: Optional[BinaryObject] = None
+    kbd_ligature_max: Optional[int] = None
+    kbd_ligature_size: Optional[int] = None
+    kbd_ligature: Optional[BinaryObject] = None
 
     kbdtables: Optional[BinaryObject] = None
 
@@ -77,7 +79,6 @@ class WinDll:
     def compile(self) -> bytes:
         self.compile_kbd_keymap()
         self.compile_kbd_charmap()
-        # self.compile_kbd_ligature()
         self.compile_tables()
         self.compile_dir_export()
         self.compile_dir_resource()
@@ -258,6 +259,7 @@ class WinDll:
             modifiers.append(BYTE(shift_state_map.get(ShiftState.from_bits(mask), 0xF)))
         self.kbd_modifiers = modifiers
 
+        ligatures = []  # (modification_number, virtual_key, wch)
         vk_to_wchars = BinaryObject(alignment=2)
         for vk, attributes in sorted(vk_attributes.items(), key=lambda e: KeyCode.untranslate_vk(e[0])):
             characters = self.layout.charmap[vk]
@@ -266,19 +268,29 @@ class WinDll:
             dead = {shiftstate: character.char
                     for shiftstate, character in characters.items()
                     if character.dead and not shiftstate.capslock}
+            ligature = {shiftstate: character.char
+                        for shiftstate, character in characters.items()
+                        if character.ligature and not shiftstate.capslock}
+
+            if not dead.keys().isdisjoint(ligature.keys()):
+                warn("ligatures may not be dead keys, ignoring")
+                dead = {shiftstate: char for shiftstate, char in dead if shiftstate not in ligature}
 
             if attributes.capslock_secondary:
                 if dead:
                     warn("CAPSLOCK_SECONDARY is incompatible with dead keys, ignoring")
                     attributes = dataclasses.replace(attributes, capslock_secondary=False)
                 else:
+                    if ({character for shiftstate, character in characters.items()
+                         if character.ligature and shiftstate.capslock}):
+                        warn("CAPSLOCK_SECONDARY is incompatible with ligatures, ignoring")
                     secondary = {dataclasses.replace(shiftstate, capslock=False): character
                                  for shiftstate, character in characters.items()
-                                 if shiftstate.capslock}
+                                 if not character.ligature and shiftstate.capslock}
                     # while unusual, deadkeys are valid in secondary capslock layer
                     dead = {dataclasses.replace(shiftstate, capslock=False): character
                             for shiftstate, character in characters.items()
-                            if character.dead and shiftstate.capslock}
+                            if character.dead and not character.ligature and shiftstate.capslock}
 
             # base row
             vk_to_wchars.append(BYTE(vk))
@@ -287,6 +299,8 @@ class WinDll:
                 character = characters.get(shift_states[shiftstate], Character("\uF000"))  # WCH_NONE
                 if character.dead:
                     character = Character("\uF001")  # WCH_DEAD
+                if character.ligature:
+                    character = Character("\uF002")  # WCH_LIGATURE
                 vk_to_wchars.append(WCHAR(character.char))
 
             # secondary capslock row (SGCAPS)
@@ -305,6 +319,9 @@ class WinDll:
                 vk_to_wchars.append(BYTE(0))
                 for shiftstate in range(len(shift_states)):
                     vk_to_wchars.append(WCHAR(dead.get(shift_states[shiftstate], "\uF000")))
+
+            for shiftstate, char in ligature.items():
+                ligatures.append((shift_state_map[shiftstate], vk, char.encode("utf-16le")))
         vk_to_wchars.append(BYTE(0))  # end of table
         vk_to_wchars.append(BYTE(0))
         for shiftstate in range(len(shift_states)):
@@ -337,6 +354,22 @@ class WinDll:
         key_names_dead.append(LPTR(self.architecture, None))  # end of table
         self.kbd_key_names_dead = key_names_dead
 
+        ligature = BinaryObject(alignment=8)
+        max_ligature_len = max(map(lambda lig: len(lig[2]), ligatures))
+        for modification_number, virtual_key, wch in sorted(ligatures):
+            ligature.append(BYTE(virtual_key))
+            ligature.append(WORD(modification_number))
+            ligature.append(wch)
+            for i in range(len(wch), max_ligature_len, 2):
+                ligature.append(WCHAR("\uF000"))
+        ligature.append(BYTE(0))  # end of table
+        ligature.append(WORD(0))
+        for i in range(0, max_ligature_len, 2):
+            ligature.append(WCHAR("\0"))
+        self.kbd_ligature_max = max_ligature_len // 2
+        self.kbd_ligature_size = 4 + max_ligature_len
+        self.kbd_ligature = ligature
+
     def decompile_kbd_charmap(self):
         self.layout.charmap = {}
         self.layout.deadkeys = {}
@@ -358,6 +391,17 @@ class WinDll:
             column = BYTE.read(modifiers)
             if column != 0xF:
                 shift_state_map[column] = ShiftState.from_bits(mask)
+
+        ligatures = {}
+        if self.kbd_ligature is not None:
+            ligature = BinaryObjectReader(self.kbd_ligature)
+            while True:
+                vk = BYTE.read(ligature)
+                if vk == 0:
+                    break
+                mod = WORD.read(ligature)
+                char = ligature.read_bytes(2 * self.kbd_ligature_max, 2).decode("utf-16le").rstrip("\uF000")
+                ligatures[(vk, mod)] = char
 
         attributes_update = {}
         vk_to_wchar_table = BinaryObjectReader(self.kbd_vk_to_wchar_table)
@@ -391,7 +435,11 @@ class WinDll:
                         else:
                             dead[col] = True
                     elif character.char == "\uF002":  # Ligature
-                        warn("ligature detected, skipping")
+                        char = ligatures.get((vk, col), None)
+                        if char is None:
+                            warn("ligature is missing")
+                        else:
+                            characters[shiftstate] = Character(char)
                     else:
                         characters[shiftstate] = character
                 row += 1
@@ -406,7 +454,7 @@ class WinDll:
                         elif character.char == "\uF001":  # Dead
                             dead[col] = True
                         elif character.char == "\uF002":  # Ligature
-                            warn("ligature detected, skipping")
+                            warn("SGCAPS maps to ligature, skipping")
                         else:
                             characters[shiftstate] = character
                     row += 1
@@ -494,9 +542,9 @@ class WinDll:
         kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk_e0))
         kbdtables.append(LPTR(self.architecture, self.kbd_vsc_to_vk_e1))
         kbdtables.append(MAKELONG(1, 1))  # fLocaleFlags  # TODO KLLF_ALTGR, KLLF_SHIFTLOCK, KLLF_LRM_RLM
-        kbdtables.append(BYTE(0))
-        kbdtables.append(BYTE(0))
-        kbdtables.append(LPTR(self.architecture, None))  # pLigature  # TODO ligatures
+        kbdtables.append(BYTE(self.kbd_ligature_max))
+        kbdtables.append(BYTE(self.kbd_ligature_size))
+        kbdtables.append(LPTR(self.architecture, self.kbd_ligature))  # pLigature
         kbdtables.append(DWORD(0))  # dwType, if Win XP  # TODO dwType
         kbdtables.append(DWORD(0))  # dwSubType, if Win XP  # TODO dwSubType
 
@@ -542,7 +590,14 @@ class WinDll:
         vsc_to_vk_e1_rva = LPTR.read(kbdtables, self.architecture) - self.base
         self.kbd_vsc_to_vk_e1 = BinaryObject(self._extract_array(vsc_to_vk_e1_rva, 4)[0], alignment=8)
 
-        # TODO fLocaleFlags, pLigature, dwType, dwSubType
+        locale_flags = DWORD.read(kbdtables)  # TODO fLocaleFlags
+
+        self.kbd_ligature_max = BYTE.read(kbdtables)
+        self.kbd_ligature_size = BYTE.read(kbdtables)
+        ligature_rva = LPTR.read(kbdtables, self.architecture) - self.base
+        self.kbd_ligature = BinaryObject(self._extract_array(ligature_rva, self.kbd_ligature_size)[0], alignment=2)
+
+        # TODO dwType, dwSubType
 
     def compile_dir_export(self):
         func = BinaryObject(alignment=16)                           # -- PKBDTABLES KbdLayerDescriptor() --

@@ -121,7 +121,7 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
                 character = characters[shiftstate]
                 text = character.char
                 color = (255, 0, 0) if character.dead else (0, 0, 0)
-                if ord(character.char) < 0x20:
+                if not character.ligature and ord(character.char) < 0x20:
                     text = '^' + chr(ord(character.char) + 0x40)
                     color = (255, 128, 0) if character.dead else (0, 128, 0)
                 draw_text(draw, x + px * w, y + py * h, font, text, color)
