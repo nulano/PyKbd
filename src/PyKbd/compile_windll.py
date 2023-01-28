@@ -22,13 +22,11 @@ from time import time
 from typing import Union, List
 from warnings import warn
 
-from . import _version, _version_num
+from . import __version__, _version_num
+from .crc16 import crc16xmodem
 from .layout import *
 from .wintypes import *
 from .linker_binary import BinaryObject, BinaryObjectReader, link
-
-
-__version__ = _version
 
 
 @dataclass(eq=False)
@@ -635,17 +633,23 @@ class WinDll:
                                       alignment=self.architecture.long_pointer)
 
     def compile_dir_resource(self):
+        revision = crc16xmodem(self.layout.to_json())
+        str_version = f"{self.layout.version[0]}.{self.layout.version[1]} ({revision})"
+
         def version_word():
             return MAKELONG(self.layout.version[1], self.layout.version[0])
+
+        def subversion_word():
+            return MAKELONG(revision, 0)
 
         # https://docs.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-tagvs_fixedfileinfo
         info_fixed = BinaryObject(alignment=4)      # -- VS_FIXEDFILEINFO --
         info_fixed.append(DWORD(0xFEEF04BD))        # dwSignature (must be 0xFEEF04BD)
         info_fixed.append(MAKELONG(0, 1))           # dwStrucVersion (MAKELONG(minor, major))
         info_fixed.append(version_word())           # dwFileVersionMS (MAKELONG(minor, major))
-        info_fixed.append(MAKELONG(0, 0))           # dwFileVersionLS (MAKELONG(build, revision))
+        info_fixed.append(subversion_word())        # dwFileVersionLS (MAKELONG(build, revision))
         info_fixed.append(version_word())           # dwProductVersionMS (MAKELONG(minor, major))
-        info_fixed.append(MAKELONG(0, 0))           # dwProductVersionLS (MAKELONG(build, revision))
+        info_fixed.append(subversion_word())        # dwProductVersionLS (MAKELONG(build, revision))
         info_fixed.append(DWORD(0x3F))              # dwFileFlagsMask
         info_fixed.append(DWORD(0))                 # dwFileFlags
         info_fixed.append(DWORD(0x00040004))        # dwFileOS (VOS_NT_WINDOWS32)
@@ -662,14 +666,16 @@ class WinDll:
         string_table.append(WSTR("000004B0"))       # szKey (MAKELONG(codepage, language); UNICODE=0x04b0)
         string_table.append_padding(4)              # Padding
         for key, value in sorted({                  # Children (String{1,})
+            # TODO "Comments" doesn't show in File Explorer details pane
+            "Comments": "Generated with PyKbd %s for %s" % (__version__, self.architecture.name),
             "CompanyName": self.layout.author,
             "FileDescription": self.layout.name,
-            "FileVersion": "%i.%i" % self.layout.version,
+            "FileVersion": str_version,
             "InternalName": self.layout.dll_name[:-4],
             "LegalCopyright": self.layout.copyright,
             "OriginalFilename": self.layout.dll_name,
             "ProductName": self.layout.name,
-            "ProductVersion": "%i.%i" % self.layout.version,
+            "ProductVersion": str_version,
         }.items(), key=itemgetter(0)):
             key = WSTR(key)
             value = WSTR(value)
