@@ -354,21 +354,26 @@ class WinDll:
         key_names_dead.append(LPTR(self.architecture, None))  # end of table
         self.kbd_key_names_dead = key_names_dead
 
-        ligature = BinaryObject(alignment=8)
-        max_ligature_len = max(map(lambda lig: len(lig[2]), ligatures))
-        for modification_number, virtual_key, wch in sorted(ligatures):
-            ligature.append(BYTE(virtual_key))
-            ligature.append(WORD(modification_number))
-            ligature.append(wch)
-            for i in range(len(wch), max_ligature_len, 2):
-                ligature.append(WCHAR("\uF000"))
-        ligature.append(BYTE(0))  # end of table
-        ligature.append(WORD(0))
-        for i in range(0, max_ligature_len, 2):
-            ligature.append(WCHAR("\0"))
-        self.kbd_ligature_max = max_ligature_len // 2
-        self.kbd_ligature_size = 4 + max_ligature_len
-        self.kbd_ligature = ligature
+        if ligatures:
+            ligature = BinaryObject(alignment=8)
+            max_ligature_len = max(map(lambda lig: len(lig[2]), ligatures))
+            for modification_number, virtual_key, wch in sorted(ligatures):
+                ligature.append(BYTE(virtual_key))
+                ligature.append(WORD(modification_number))
+                ligature.append(wch)
+                for i in range(len(wch), max_ligature_len, 2):
+                    ligature.append(WCHAR("\uF000"))
+            ligature.append(BYTE(0))  # end of table
+            ligature.append(WORD(0))
+            for i in range(0, max_ligature_len, 2):
+                ligature.append(WCHAR("\0"))
+            self.kbd_ligature_max = max_ligature_len // 2
+            self.kbd_ligature_size = 4 + max_ligature_len
+            self.kbd_ligature = ligature
+        else:
+            self.kbd_ligature_max = 0
+            self.kbd_ligature_size = 0
+            self.kbd_ligature = None
 
     def decompile_kbd_charmap(self):
         self.layout.charmap = {}
@@ -594,8 +599,9 @@ class WinDll:
 
         self.kbd_ligature_max = BYTE.read(kbdtables)
         self.kbd_ligature_size = BYTE.read(kbdtables)
-        ligature_rva = LPTR.read(kbdtables, self.architecture) - self.base
-        self.kbd_ligature = BinaryObject(self._extract_array(ligature_rva, self.kbd_ligature_size)[0], alignment=2)
+        ligature_ptr = LPTR.read(kbdtables, self.architecture)
+        if ligature_ptr:
+            self.kbd_ligature = BinaryObject(self._extract_array(ligature_ptr - self.base, self.kbd_ligature_size)[0], alignment=2)
 
         # TODO dwType, dwSubType
 
