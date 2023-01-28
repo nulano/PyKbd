@@ -14,6 +14,8 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from collections import defaultdict
+
 import unicodedata
 from dataclasses import dataclass
 from math import sqrt
@@ -226,3 +228,23 @@ def draw_dead_keys_tree(layout: Layout):
             return text
 
     return asciitree.LeftAligned(traverse=DeadKeyTraversal())(None)
+
+
+def how_to_type(layout: Layout):
+    characters = defaultdict(list)
+
+    def process_char(char, *prev):
+        if char.dead:
+            dead = layout.deadkeys.get(char.char)
+            if dead is None:
+                return
+            for a, b in dead.charmap.items():
+                process_char(b, *prev, a)
+        else:
+            characters[char.char].append(prev)
+
+    for vk, key in layout.charmap.items():
+        for shiftstate, char in key.items():
+            process_char(char, (vk, shiftstate))
+
+    return dict(characters)

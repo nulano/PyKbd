@@ -19,7 +19,7 @@ import sys
 
 from PyKbd.compile_windll import WinDll
 from PyKbd.layout import Layout
-from PyKbd.visualizer import draw_keyboard, ISO, draw_dead_keys, draw_dead_keys_tree
+from PyKbd.visualizer import draw_keyboard, ISO, draw_dead_keys, draw_dead_keys_tree, how_to_type
 
 windll = WinDll()
 
@@ -32,3 +32,5 @@ json = windll.layout.to_json()
 assert Layout.from_json(json) == windll.layout
 print(json)
 print(draw_dead_keys_tree(windll.layout))
+howto = how_to_type(windll.layout)
+print(len(howto))
