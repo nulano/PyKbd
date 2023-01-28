@@ -14,6 +14,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import unicodedata
 from dataclasses import dataclass
 from math import sqrt
 from typing import Optional, List, Tuple
@@ -95,8 +96,7 @@ ISO = Keyboard([
 
 
 def draw_text(draw, x, y, font, text, color=(0, 0, 0)):
-    xs, ys = font.getsize(text)
-    draw.text((x - xs / 2, y - ys / 2), text, fill=color, font=font)
+    draw.text((x, y), text, fill=color, font=font, anchor="mm")
 
 
 def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: ImageFont, hide_name: bool = False):
@@ -178,3 +178,51 @@ def draw_dead_keys(layout: Layout):
     im = Image.frombytes('RGB', canvas.get_width_height(), canvas.tostring_rgb())
     # plt.show()
     return im
+
+
+def draw_dead_keys_tree(layout: Layout):
+    import asciitree
+
+    class DeadKeyTraversal(asciitree.Traversal):
+        def __init__(self):
+            self.visited = set()
+
+        def get_children(self, node):
+            if node is None:
+                def i(c, s, m):
+                    p = m[ShiftState()].char
+                    ss = s.to_string()
+                    if ss != "default":
+                        p = f"{ss.replace(',', ' + ')} + {p}"
+                    return p, c
+
+                return [i(c, s, m) for m in layout.charmap.values() for s, c in m.items() if c.dead]
+            prev, char = node
+            if not char.dead:
+                return []
+            if char.char in self.visited:
+                return []
+            self.visited.add(char.char)
+            dead_key = layout.deadkeys.get(char.char)
+            if dead_key is None:
+                return []
+            return [i for i in dead_key.charmap.items() if i[1].char != '\0']
+
+        def get_text(self, node):
+            if node is None:
+                return layout.name
+            prev, char = node
+            text = f"'{char.char}'"
+            if char.dead:
+                dead_key = layout.deadkeys.get(char.char)
+                if dead_key is not None and dead_key.name != char.char:
+                    text = f"{text} {dead_key.name}"
+                text = f"{text} (dead)"
+            elif char.char != "\0":
+                name = unicodedata.name(char.char)
+                text = f"{text} {name}"
+            if prev is not None:
+                text = f"'{prev}' ⟶ {text}"
+            return text
+
+    return asciitree.LeftAligned(traverse=DeadKeyTraversal())(None)
