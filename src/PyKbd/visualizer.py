@@ -101,7 +101,7 @@ def draw_text(draw, x, y, font, text, color=(0, 0, 0)):
     draw.text((x, y), text, fill=color, font=font, anchor="mm")
 
 
-def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: ImageFont, hide_name: bool = False):
+def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, dead: Optional[str], key: ScanCode, font: ImageFont, font2: ImageFont, hide_name: bool = False):
     draw.rectangle((x, y, x + w, y + h), outline=(0, 0, 0))
     keycode = layout.keymap.get(key)
     if keycode is None:
@@ -111,6 +111,9 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
         draw_text(draw, x + w / 2, y + h / 2, font, keycode.name or "0x%X" % keycode.win_vk, color=(0, 0, 192))
     else:
         characters = layout.charmap[vk]
+        if dead is not None:
+            characters = {s: layout.deadkeys[dead].charmap.get(c.char) for s, c in characters.items() if not c.dead}
+            characters = {s: c for s, c in characters.items() if c is not None}
         for shiftstate, px, py in [
             (ShiftState(shift=True,  control=False, alt=False), 0.2, 0.25),
             (ShiftState(shift=False, control=False, alt=False), 0.2, 0.75),
@@ -127,27 +130,40 @@ def draw_key(x, y, w, h, draw: ImageDraw, layout: Layout, key: ScanCode, font: I
                 if character.ligature:
                     color = (0, 0, 255)
                     if len(character.char) > 2:
-                        font_ = font.font_variant(size=10)
+                        font_ = font2
                 elif ord(character.char) < 0x20:
                     text = '^' + chr(ord(character.char) + 0x40)
                     color = (255, 128, 0) if character.dead else (0, 128, 0)
                 draw_text(draw, x + px * w, y + py * h, font_, text, color)
 
 
-def draw_keyboard(layout: Layout, keyboard: Keyboard):
+def draw_keyboard(layout: Layout, keyboard: Keyboard, dead: Optional[str] = None):
     key_size = 100
     im = Image.new("RGB", (23 * key_size + 1, int(7 * key_size) + 1), (255, 255, 255))
     draw = ImageDraw.Draw(im, "RGB")
     font = ImageFont.truetype('segoeui', 24)
-    draw_text(draw, 23 / 2 * key_size, 0.25 * key_size, font, layout.name + " by " + layout.author)
+    small = font.font_variant(size=10)
+    try:
+        font = ImageFont.FreeTypeFontFamily(font, ImageFont.truetype("seguisym.ttf", 24))
+    except AttributeError:
+        pass
+    title = f"{layout.name} by {layout.author}"
+    if dead is not None:
+        dead_name = f"'{dead}'"
+        if layout.deadkeys[dead].name != dead:
+            dead_name = f"{dead_name} {layout.deadkeys[dead].name}"
+        title = f"{title} (dead key {dead_name})"
+    draw_text(draw, 23 / 2 * key_size, 0.25 * key_size, font, title)
+    draw.line((5 * key_size, 4.95 * key_size, 5.5 * key_size, 4.95 * key_size), fill=(32, 32, 32))
+    draw.line((8 * key_size, 4.95 * key_size, 8.5 * key_size, 4.95 * key_size), fill=(32, 32, 32))
     for ox, oy, group in keyboard.groups:
         for y, row in enumerate(group.rows):
             if row.left is not None:
-                draw_key(ox * key_size, (y * group.height + oy) * key_size, row.left_width * key_size, group.height * key_size, draw, layout, ScanCode(row.left, group.prefix), font)
+                draw_key(ox * key_size, (y * group.height + oy) * key_size, row.left_width * key_size, group.height * key_size, draw, layout, dead, ScanCode(row.left, group.prefix), font, small)
             for x, key in enumerate(row.keys):
-                draw_key((x + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, key_size, group.height * key_size, draw, layout, ScanCode(key, group.prefix), font, not group.special)
+                draw_key((x + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, key_size, group.height * key_size, draw, layout, dead, ScanCode(key, group.prefix), font, small, not group.special)
             if row.right is not None:
-                draw_key((len(row.keys) + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, row.right_width * key_size, group.height * key_size, draw, layout, ScanCode(row.right, group.prefix), font)
+                draw_key((len(row.keys) + ox + row.left_width) * key_size, (y * group.height + oy) * key_size, row.right_width * key_size, group.height * key_size, draw, layout, dead, ScanCode(row.right, group.prefix), font, small)
     return im
 
 

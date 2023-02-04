@@ -16,6 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
+import unicodedata
 
 from PyKbd.compile_windll import WinDll
 from PyKbd.layout import Layout
@@ -26,7 +27,22 @@ windll = WinDll()
 with open(sys.argv[1], "rb") as f:
     windll.decompile(f.read())
 
-draw_keyboard(windll.layout, ISO).show()
+
+def show(im, suffix):
+    if len(sys.argv) >= 3:
+        im.save(f"{sys.argv[2]}_{suffix}.png")
+    else:
+        im.show()
+
+
+show(draw_keyboard(windll.layout, ISO), "main")
+for dead, dead_key in windll.layout.deadkeys.items():
+    if dead_key.name == dead:
+        name = unicodedata.name(dead)
+    else:
+        name = dead_key.name
+    name = name.replace(" ", "_")
+    show(draw_keyboard(windll.layout, ISO, dead), f"dead_{name}")
 # draw_dead_keys(windll.layout).show()
 json = windll.layout.to_json()
 assert Layout.from_json(json) == windll.layout
