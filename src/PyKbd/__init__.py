@@ -18,4 +18,13 @@
 _version = "0.1.0-dev0"
 _version_num = (0, 1, 0)
 
-__version__ = _version
+try:
+    import subprocess as _subprocess
+
+    _s = _subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True)
+    _commit = _s.stdout.decode("ascii").strip()
+    __version__ = f"{_version} ({_commit})"
+except Exception:
+    __version__ = _version
+
+print(f"Importing PyKbd version {__version__}")
