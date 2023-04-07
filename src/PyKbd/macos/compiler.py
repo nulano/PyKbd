@@ -4,7 +4,8 @@ from warnings import warn
 
 from lxml import etree
 
-from PyKbd.data import mac_vk
+from PyKbd import __version__
+from PyKbd.data import mac_vk, win_vk
 from PyKbd.layout import Layout, KeyCode, ShiftState, Character, KeyAttributes
 
 DOCTYPE = '<!DOCTYPE keyboard SYSTEM "file://localhost/System/Library/DTDs/KeyboardLayout.dtd">'
@@ -21,6 +22,7 @@ def compile_keylayout(layout: Layout) -> str:
                 id=f"-{''.join(str(ord(c)) for c in layout.dll_name[3:-4])}",
                 name=f"{layout.name} (version {'.'.join(map(str, layout.version))})",
         ):
+            xf.write(etree.Comment("Generated with PyKbd %s" % (__version__,)))
 
             # all physical keyboards map to the same VKs with minimal overlap (only \| key on ANSI/ISO)
             # define only a single layout to use for all keyboards
@@ -29,7 +31,6 @@ def compile_keylayout(layout: Layout) -> str:
 
             # convert layout to macOS format (i.e. invert tables)
             charmap = convert_layout(layout)
-            # TODO may need to add extra control mappings that are not needed on Windows
 
             modifiers = list(convert_attributes_to_shift_map(KeyAttributes()).keys())
             with xf.element("modifierMap", id="modifiers", defaultIndex="0"):
@@ -44,7 +45,7 @@ def compile_keylayout(layout: Layout) -> str:
                     xf.write(etree.Element("when", state=state, next=next_))
                 else:
                     output = "".join(c if 32 <= ord(c) <= 127 and c not in '\n\r\t"<>&' else f"&#{ord(c)};"
-                                     for c in result.char if c != "\0")
+                                     for c in result.char)  # TODO it seems null bytes sometimes appear
                     # output = result.char
                     xf.write(etree.Element("when", state=state, output=output))
 
@@ -54,7 +55,7 @@ def compile_keylayout(layout: Layout) -> str:
                         for mvk, column in charmap.items():
                             action = column.get(m)
                             if action is None:
-                                continue  # TODO may need to add some default control chars
+                                continue
                             # TODO no need for <action> element if len(action) == 1
                             with xf.element("key", code=str(mvk.code)):
                                 with xf.element("action"):
@@ -67,7 +68,10 @@ def compile_keylayout(layout: Layout) -> str:
                 for dead in layout.deadkeys:
                     when(dead, Character(dead))
 
-    return etree.tostring(etree.fromstring(f.getvalue()), pretty_print=True).decode("utf-8").replace("&amp;", "&")
+    f.seek(0)
+    tree = etree.parse(f)
+    text = etree.tostring(tree, encoding="utf-8", xml_declaration=True, pretty_print=True)
+    return text.decode("utf-8").replace("&amp;", "&")
 
 
 def convert_layout(layout: Layout) -> dict[mac_vk.Vk, dict[str, dict[Optional[str], Character]]]:
@@ -78,14 +82,54 @@ def convert_layout(layout: Layout) -> dict[mac_vk.Vk, dict[str, dict[Optional[st
             warn("no mapping for " + mvk.name)
             continue
         vk = KeyCode.translate_vk(keycode.win_vk)
-        if vk in (0, 0xFF) or len(layout.charmap.get(vk, {})) == 0:
+        vk &= ~0x100  # drop KBDEXT flag
+        wvk = win_vk.code_to_vk.get(vk)
+        action = layout.charmap.get(vk, {})
+        if len(action) == 0:
+            # add default mappings for some control keys not needed on Windows
+            control = {
+                win_vk.VK_HOME: "\x01",
+                win_vk.VK_END: "\x04",
+                win_vk.VK_INSERT: "\x05",
+                win_vk.VK_PRIOR: "\x0b",
+                win_vk.VK_NEXT: "\x0c",
+                win_vk.VK_NUMLOCK: "\x1b",  # kVK_ANSI_KeypadClear
+                win_vk.VK_NUMLOCK_MULTIVK: "\x1b",  # kVK_ANSI_KeypadClear
+                win_vk.VK_LEFT: "\x1c",
+                win_vk.VK_RIGHT: "\x1d",
+                win_vk.VK_UP: "\x1e",
+                win_vk.VK_DOWN: "\x1f",
+                win_vk.VK_DELETE: "\x7f",
+                # TODO these may be needed on Windows, macOS might need different mappings, not sure
+                # win_vk.VK_RETURN: "\x0d",
+                # win_vk.VK_TAB: "\x09",
+                # win_vk.VK_BACK: "\x08",
+                # win_vk.VK_ESCAPE: "\x1b",
+            }.get(wvk)
+            if win_vk.VK_F1 <= wvk <= win_vk.VK_F24:
+                control = "\x10"
+            # TODO unknown mac_vk mappings:
+            #  52 -> \x03
+            #  66 -> \x1d,*
+            #  70 -> \x1c,+
+            #  72 -> \x1f,= (volume up)
+            #  76 -> \x03? (numpad enter)
+            #  77 -> \x1e,/
+            #  81 -> = (numpad equals)
+            #  105 -> \x10 (f13)
+            if control is not None:
+                charmap[mvk] = {mac_state: convert_character(layout, Character(control))
+                                for mac_state in convert_attributes_to_shift_map(keycode.attributes)}
+                continue
+            # print(f"{mvk!r} -> {vk.to_bytes(2, 'big').hex()}, {wvk!r}")
+        if vk in (0, 0xFF):
             continue
         elif vk > 0xFF:
             warn("unknown special vk, skipping: 0x%X" % vk)
             continue
-        charmap[mvk] = {mac_state: convert_character(layout, layout.charmap[vk][win_state])
+        charmap[mvk] = {mac_state: convert_character(layout, action[win_state])
                         for mac_state, win_state in convert_attributes_to_shift_map(keycode.attributes).items()
-                        if win_state in layout.charmap[vk]}
+                        if win_state in action}
     return charmap
 
 
