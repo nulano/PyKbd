@@ -46,16 +46,16 @@ DelFiles = Files_Inf, Files_System32_NTAMD64, Files_SysWOW64_NTAMD64
 LegacyUninstall = 1
 
 [Files_Inf]
-{layout.dll_name[:-4]}.inf,,,0x00010002
+{layout.dll_name[:-4]}.inf,,,0x00010000
 
 [Files_System32_NTx86]
-{layout.dll_name},{layout.dll_name[:-4]}32.dll,,0x00014002
+{layout.dll_name},{layout.dll_name[:-4]}32.dll,,0x00014000
 
 [Files_System32_NTAMD64]
-{layout.dll_name},{layout.dll_name[:-4]}64.dll,,0x00014002
+{layout.dll_name},{layout.dll_name[:-4]}64.dll,,0x00014000
 
 [Files_SysWOW64_NTAMD64]
-{layout.dll_name},{layout.dll_name[:-4]}WW.dll,,0x00014002
+{layout.dll_name},{layout.dll_name[:-4]}WW.dll,,0x00014000
 
 [Reg_Layout]
 HKLM,"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\{layout_id}","Layout Text",,"{layout.name}"
@@ -73,4 +73,14 @@ HKLM,"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{layout.dll_name}
 [Reg_Delete]
 HKLM,"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\{layout_id}"
 HKLM,"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{layout.dll_name}"
+"""
+
+
+def generate_inf_launcher(inffile, uninstall=False):
+    action = "DefaultUninstall" if uninstall else "DefaultInstall"
+    # TODO the following redirection requires Vista or newer
+    return f"""
+set "SystemPath=%SystemRoot%\\System32"
+if not "%ProgramFiles(x86)%" == "" if exist %SystemRoot%\\Sysnative\\cmd.exe set "SystemPath=%SystemRoot%\\Sysnative"
+%SystemPath%\\rundll32.exe setupapi,InstallHinfSection {action} 132 %~dp0{inffile}
 """
