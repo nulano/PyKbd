@@ -694,6 +694,7 @@ class WinDll:
                                       alignment=self.architecture.long_pointer)
 
     def compile_dir_resource(self):
+        # keep in sync with wininf, TODO refactor this
         revision = crc16xmodem(self.layout.to_json())
         str_version = f"{self.layout.version[0]}.{self.layout.version[1]} ({revision})"
 
