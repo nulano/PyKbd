@@ -109,9 +109,9 @@ class ScanCode:
 
     def to_string(self):
         if self.prefix != 0:
-            return "%X,%X" % (self.prefix, self.code)
+            return "%02X,%02X" % (self.prefix, self.code)
         else:
-            return "%X" % self.code
+            return "%02X" % self.code
 
     @classmethod
     def from_string(cls, string):
