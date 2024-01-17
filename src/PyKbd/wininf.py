@@ -2,14 +2,18 @@ from PyKbd.crc16 import crc16xmodem
 from PyKbd.layout import Layout
 
 
+def get_name(layout: Layout):
+    # keep in sync with compile_windll, TODO refactor this
+    revision = crc16xmodem(layout.to_json())
+    return f"{layout.name} {layout.version[0]}.{layout.version[1]} ({revision})"
+
+
 def generate_inf_file(layout: Layout):
     # TODO add version to name
     layout_id = "19360409"  # TODO "{variant}{codepage}"
     size = 32  # TODO size in kB
 
-    # keep in sync with compile_windll, TODO refactor this
-    revision = crc16xmodem(layout.to_json())
-    name = f"{layout.name} {layout.version[0]}.{layout.version[1]} ({revision})"
+    name = get_name(layout)
 
     return f"""
 ; https://learn.microsoft.com/en-us/windows-hardware/drivers/install/summary-of-inf-sections
@@ -78,11 +82,19 @@ HKLM,"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{layout.dll_name}
 """
 
 
-def generate_inf_launcher(inffile, uninstall=False):
+def generate_inf_launcher(layout: Layout, inffile, uninstall=False):
+    name = get_name(layout)
+    verb = "Uninstall" if uninstall else "Install"
     action = "DefaultUninstall" if uninstall else "DefaultInstall"
-    # TODO the following redirection requires Vista or newer (that may be OK, 64-bit XP was uncommon)
+    # TODO the Sysnative indirection below requires Vista or newer (that may be OK, 64-bit XP was uncommon)
     return f"""
+@choice /M "{verb} {name}"
+@if errorlevel 2 goto end
+@if errorlevel 1 (echo Running {inffile}) else goto end
 set "SystemPath=%SystemRoot%\\System32"
 if not "%ProgramFiles(x86)%" == "" if exist %SystemRoot%\\Sysnative\\cmd.exe set "SystemPath=%SystemRoot%\\Sysnative"
 %SystemPath%\\rundll32.exe setupapi,InstallHinfSection {action} 132 %~dp0{inffile}
+@echo.
+@pause
+:end
 """
