@@ -2,6 +2,7 @@ import os
 import sys
 
 from PyKbd.compile_windll import WinDll
+from PyKbd.crc16 import crc16xmodem
 from PyKbd.layout import Layout
 from PyKbd.wininf import generate_inf_file, generate_inf_launcher
 from PyKbd.wintypes import X86, AMD64, WOW64
@@ -10,6 +11,11 @@ with open(sys.argv[1] + ".json", "r", encoding="utf-8") as f:
     data = f.read()
 
 layout = Layout.from_json(data)
+
+# keep in sync with compile_windll, wininf, TODO refactor this
+revision = crc16xmodem(layout.to_json())
+name = f"{layout.name} {layout.version[0]}.{layout.version[1]} ({revision})"
+print(f"Compiling {name}...")
 
 for arch in (X86, AMD64, WOW64):
     windll = WinDll(layout, arch)
